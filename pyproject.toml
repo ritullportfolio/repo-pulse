@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repo-pulse"
+version = "0.1.0"
+description = "Quick health reports for GitHub repositories, powered by the gh CLI."
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+repo-pulse = "repo_pulse.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/repo_pulse"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
