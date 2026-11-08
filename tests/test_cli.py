@@ -95,3 +95,16 @@ def test_prs_gh_not_installed(fixed_clock) -> None:
     result = invoke(FakeGh(raises=FileNotFoundError()), fixed_clock, "prs", "acme/widgets")
     assert result.exit_code == 1
     assert "gh CLI was not found" in result.output
+
+
+def test_version_flag_prints_version_without_calling_gh(fake_gh, fixed_clock) -> None:
+    from importlib.metadata import version
+
+    from repo_pulse import __version__
+
+    result = invoke(fake_gh, fixed_clock, "--version")
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == f"repo-pulse {__version__}"
+    assert fake_gh.calls == []
+    # Guard against __init__.py drifting from pyproject.toml.
+    assert __version__ == version("repo-pulse")
