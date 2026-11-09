@@ -6,6 +6,33 @@ from repo_pulse import gh
 from tests.conftest import FakeGh
 
 FIELDS = "number,title,author,createdAt,reviewDecision,url"
+RELEASE_FIELDS = "tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft"
+
+
+def test_list_releases_builds_expected_command(fake_gh_releases: FakeGh) -> None:
+    gh.list_releases("acme/widgets", limit=5, runner=fake_gh_releases)
+    assert fake_gh_releases.calls == [[
+        "release", "list", "--repo", "acme/widgets",
+        "--limit", "5", "--json", RELEASE_FIELDS,
+    ]]
+
+
+def test_list_releases_without_repo_omits_repo_flag(fake_gh_releases: FakeGh) -> None:
+    gh.list_releases(None, runner=fake_gh_releases)
+    assert "--repo" not in fake_gh_releases.calls[0]
+
+
+def test_list_releases_parses_fixture(fake_gh_releases: FakeGh) -> None:
+    releases = gh.list_releases("acme/widgets", runner=fake_gh_releases)
+    assert [r.tag for r in releases] == ["v2.2.0", "v2.2.0-rc.1", "v2.1.0", "v1.0.0"]
+    assert releases[2].is_latest
+    assert releases[0].is_draft
+
+
+def test_list_releases_non_list_json_raises_gh_error() -> None:
+    runner = FakeGh(stdout='{"oops": true}')
+    with pytest.raises(gh.GhError, match="expected a JSON list of releases"):
+        gh.list_releases("acme/widgets", runner=runner)
 
 
 def test_list_prs_builds_expected_command(fake_gh: FakeGh) -> None:

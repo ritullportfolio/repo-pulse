@@ -108,3 +108,70 @@ def test_version_flag_prints_version_without_calling_gh(fake_gh, fixed_clock) ->
     assert fake_gh.calls == []
     # Guard against __init__.py drifting from pyproject.toml.
     assert __version__ == version("repo-pulse")
+
+
+def test_releases_table_shows_tags_ages_and_status(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets")
+    assert result.exit_code == 0, result.output
+    out = result.output
+    for expected in ("v2.2.0", "30m", "draft",
+                     "v2.2.0-rc.1", "5h", "pre-release",
+                     "v2.1.0", "Widgets 2.1.0", "3d", "latest",
+                     "v1.0.0", "1y"):
+        assert expected in out
+
+
+def test_releases_json_output(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets", "--json")
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    assert rows[2] == {
+        "tag": "v2.1.0",
+        "name": "Widgets 2.1.0",
+        "published_at": "2026-01-12T12:00:00+00:00",
+        "created_at": "2026-01-12T11:00:00+00:00",
+        "age_seconds": 3 * 24 * 3600,
+        "age": "3d",
+        "is_latest": True,
+        "is_prerelease": False,
+        "is_draft": False,
+    }
+    # Draft: no publish time, age falls back to creation time.
+    assert rows[0]["published_at"] is None
+    assert rows[0]["age"] == "30m"
+    # Pre-release created without a title.
+    assert rows[1]["name"] is None
+
+
+def test_releases_passes_limit_and_defaults_to_current_repo(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(fake_gh_releases, fixed_clock, "releases", "--limit", "3")
+    assert result.exit_code == 0, result.output
+    call = fake_gh_releases.calls[0]
+    assert call[call.index("--limit") + 1] == "3"
+    assert "--repo" not in call
+
+
+def test_releases_default_limit_is_10(fake_gh_releases, fixed_clock) -> None:
+    invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets")
+    call = fake_gh_releases.calls[0]
+    assert call[call.index("--limit") + 1] == "10"
+
+
+def test_releases_rejects_zero_limit(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets", "--limit", "0")
+    assert result.exit_code != 0
+    assert fake_gh_releases.calls == []
+
+
+def test_releases_empty_list(fixed_clock) -> None:
+    result = invoke(FakeGh(stdout="[]"), fixed_clock, "releases", "acme/widgets")
+    assert result.exit_code == 0
+    assert "No releases found" in result.output
+
+
+def test_releases_gh_failure_exits_1_with_clean_message(fixed_clock) -> None:
+    fake = FakeGh(returncode=1, stderr="GraphQL: Could not resolve to a Repository with the name 'acme/nope'.")
+    result = invoke(fake, fixed_clock, "releases", "acme/nope")
+    assert result.exit_code == 1
+    assert "error: gh failed: GraphQL: Could not resolve" in result.output
+    assert "Traceback" not in result.output

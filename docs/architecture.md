@@ -8,7 +8,7 @@ repo-pulse is a Python command-line tool, built with Typer, that reports on GitH
 |---|---|
 | `cli.py` | Typer app. Parses arguments, wires the pieces together, sets exit codes. |
 | `gh.py` | The only module that runs `gh`. Builds argument lists, runs the subprocess, parses JSON, and turns failures into `GhError`. |
-| `models.py` | Dataclasses: `RepoSummary`, `PullRequest`, `Issue`, `Activity`. |
+| `models.py` | Dataclasses: `RepoSummary`, `PullRequest`, `Release`, `Issue`, `Activity`. |
 | `metrics.py` | Pure functions: ages, counts, activity rollups. No I/O. |
 | `render.py` | Turns models into a `rich` table or JSON. |
 
@@ -28,6 +28,7 @@ flowchart TD
 
     CLI -->|summary| GH
     CLI -->|prs| GH
+    CLI -->|releases| GH
     CLI -->|issues| GH
     CLI -->|activity| GH
 
@@ -84,6 +85,45 @@ sequenceDiagram
         Metrics-->>CLI: rows with age
         CLI->>Render: render_prs(rows, as_json=False)
         Render-->>User: rich table on stdout
+        CLI-->>User: exit code 0
+    else gh missing, not logged in, or repo not found
+        Proc-->>GH: stderr + non-zero exit (or FileNotFoundError)
+        GH-->>CLI: raise GhError(message)
+        CLI-->>User: one-line error on stderr, exit code 1
+    end
+```
+
+## Sequence: `repo-pulse releases owner/repo`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as cli.py (Typer)
+    participant GH as gh.py
+    participant Proc as gh CLI (subprocess)
+    participant API as GitHub API
+    participant Models as models.py
+    participant Metrics as metrics.py
+    participant Render as render.py
+
+    User->>CLI: repo-pulse releases owner/repo
+    CLI->>CLI: parse args (limit=10, json=False)
+    CLI->>GH: list_releases("owner/repo", limit=10)
+    GH->>Proc: gh release list --repo owner/repo --limit 10<br/>--json tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft
+    Proc->>API: GraphQL query (gh's stored auth)
+    API-->>Proc: release data, newest first
+
+    alt gh succeeded (exit 0)
+        Proc-->>GH: stdout: JSON array
+        GH->>GH: json.loads(stdout)
+        GH->>Models: Release.from_gh(item) for each item<br/>(name "" → None, zero publishedAt → None)
+        Models-->>GH: list[Release]
+        GH-->>CLI: list[Release]
+        CLI->>Render: render_releases(releases, clock(), as_json=False)
+        Render->>Metrics: age(released_at, now)<br/>(publishedAt, or createdAt for drafts)
+        Metrics-->>Render: timedelta
+        Render-->>User: rich table on stdout (status: latest / pre-release / draft)
         CLI-->>User: exit code 0
     else gh missing, not logged in, or repo not found
         Proc-->>GH: stderr + non-zero exit (or FileNotFoundError)
