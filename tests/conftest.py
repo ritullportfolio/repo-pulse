@@ -43,5 +43,15 @@ def fake_gh(pr_list_json: str) -> FakeGh:
 
 
 @pytest.fixture
+def release_list_json() -> str:
+    return (FIXTURES / "release_list.json").read_text()
+
+
+@pytest.fixture
+def fake_gh_releases(release_list_json: str) -> FakeGh:
+    return FakeGh(stdout=release_list_json)
+
+
+@pytest.fixture
 def fixed_clock():
     return lambda: NOW
