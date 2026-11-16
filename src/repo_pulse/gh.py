@@ -12,11 +12,14 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-from repo_pulse.models import PullRequest
+from repo_pulse.models import PullRequest, Release
 
 Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 PR_FIELDS = ("number", "title", "author", "createdAt", "reviewDecision", "url")
+RELEASE_FIELDS = (
+    "tagName", "name", "publishedAt", "createdAt", "isLatest", "isPrerelease", "isDraft",
+)
 
 
 class GhError(Exception):
@@ -70,3 +73,20 @@ def list_prs(
     if not isinstance(data, list):
         raise GhError("unexpected gh output: expected a JSON list of pull requests")
     return [PullRequest.from_gh(item) for item in data]
+
+
+def list_releases(
+    repo: str | None,
+    limit: int = 10,
+    runner: Runner | None = None,
+) -> list[Release]:
+    """List releases, newest first. With repo=None, gh uses the current directory's repo."""
+    args = ["release", "list"]
+    if repo:
+        args += ["--repo", repo]
+    args += ["--limit", str(limit), "--json", ",".join(RELEASE_FIELDS)]
+
+    data = run_gh(args, runner)
+    if not isinstance(data, list):
+        raise GhError("unexpected gh output: expected a JSON list of releases")
+    return [Release.from_gh(item) for item in data]

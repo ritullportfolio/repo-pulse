@@ -13,7 +13,7 @@ import typer
 
 from repo_pulse import __version__, gh
 from repo_pulse.metrics import Clock, utc_now
-from repo_pulse.render import render_prs
+from repo_pulse.render import render_prs, render_releases
 
 
 class PrState(str, Enum):
@@ -75,6 +75,29 @@ def create_app(runner: gh.Runner | None = None, clock: Clock = utc_now) -> typer
 
         title = f"{repo or 'current repo'}: {state.value} pull requests"
         render_prs(pull_requests, clock(), as_json=as_json, title=title)
+
+    @app.command()
+    def releases(
+        repo: Annotated[
+            Optional[str],
+            typer.Argument(
+                metavar="[OWNER/REPO]",
+                help="Repository to inspect. Defaults to the current directory's repo.",
+                show_default=False,
+            ),
+        ] = None,
+        limit: Annotated[int, typer.Option(min=1, help="Maximum number of releases to list.")] = 10,
+        as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+    ) -> None:
+        """List the latest releases with tag, name, age and status."""
+        try:
+            release_list = gh.list_releases(repo, limit=limit, runner=runner)
+        except gh.GhError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+
+        title = f"{repo or 'current repo'}: latest releases"
+        render_releases(release_list, clock(), as_json=as_json, title=title)
 
     return app
 

@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`repo-pulse` is a Python (>=3.11) CLI built with Typer that reports on GitHub repositories. All GitHub data comes from shelling out to the `gh` CLI; there is no direct API client and no token handling. Only the `prs` command exists so far. `summary`, `issues` and `activity` are planned (see `docs/architecture.md`).
+`repo-pulse` is a Python (>=3.11) CLI built with Typer that reports on GitHub repositories. All GitHub data comes from shelling out to the `gh` CLI; there is no direct API client and no token handling. The `prs` and `releases` commands exist so far. `summary`, `issues` and `activity` are planned (see `docs/architecture.md`).
 
 ## Commands
 
@@ -30,7 +30,7 @@ No linter or formatter is configured yet.
 
 ## Architecture
 
-Request flow: `cli.py` → `gh.py` → `gh` subprocess → `models.py` → `metrics.py` / `render.py`. Mermaid diagrams of this live in `docs/architecture.md`. Keep the `prs` sequence diagram in sync if function or field names change.
+Request flow: `cli.py` → `gh.py` → `gh` subprocess → `models.py` → `metrics.py` / `render.py`. Mermaid diagrams of this live in `docs/architecture.md`. Keep the `prs` and `releases` sequence diagrams in sync if function or field names change.
 
 - **`gh.py` is the only place that runs `gh`.** Everything goes through `run_gh(args, runner)`, which returns parsed JSON and converts every failure (missing binary, not logged in, non-zero exit, bad JSON) into `GhError` with a user-facing message. Commands must call `gh` via this function, never `subprocess` directly. Arguments are passed as a list (no `shell=True`).
 - **Dependency injection, not mocking.** Define new commands inside `cli.create_app(runner=..., clock=...)`; the entry point `app = create_app()` uses the real `gh` and `utc_now`.
