@@ -1,139 +1,51 @@
-"""Turn models into terminal tables or JSON."""
+"""Shared output for every report: age formatting and the JSON / empty / table switch.
+
+Report-specific rows and tables live in each `repo_pulse.reports` module.
+"""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import Any, TypeVar
 
 from rich.console import Console
 from rich.table import Table
 
 from repo_pulse.metrics import age, format_age
-from repo_pulse.models import PullRequest, Release
 
-REVIEW_LABELS = {
-    "APPROVED": "approved",
-    "CHANGES_REQUESTED": "changes requested",
-    "REVIEW_REQUIRED": "review required",
-}
+T = TypeVar("T")
 
 
-def review_label(decision: str | None) -> str:
-    if decision is None:
-        return "-"
-    return REVIEW_LABELS.get(decision, decision.lower().replace("_", " "))
+def age_fields(when: datetime, now: datetime) -> dict[str, Any]:
+    """The two age keys every report's JSON rows share."""
+    delta = age(when, now)
+    return {"age_seconds": int(delta.total_seconds()), "age": format_age(delta)}
 
 
-def prs_as_dicts(prs: Sequence[PullRequest], now: datetime) -> list[dict]:
-    return [
-        {
-            "number": pr.number,
-            "title": pr.title,
-            "author": pr.author,
-            "created_at": pr.created_at.isoformat(),
-            "age_seconds": int(age(pr.created_at, now).total_seconds()),
-            "age": format_age(age(pr.created_at, now)),
-            "review_decision": pr.review_decision,
-            "url": pr.url,
-        }
-        for pr in prs
-    ]
+def age_cell(when: datetime, now: datetime) -> str:
+    """Compact age for a table cell, e.g. '3d'."""
+    return format_age(age(when, now))
 
 
-def prs_table(prs: Sequence[PullRequest], now: datetime, title: str) -> Table:
-    table = Table(title=title)
-    table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Title")
-    table.add_column("Author", no_wrap=True)
-    table.add_column("Age", justify="right", no_wrap=True)
-    table.add_column("Review", no_wrap=True)
-    for pr in prs:
-        table.add_row(
-            str(pr.number),
-            pr.title,
-            pr.author,
-            format_age(age(pr.created_at, now)),
-            review_label(pr.review_decision),
-        )
-    return table
-
-
-def render_prs(
-    prs: Sequence[PullRequest],
+def render_report(
+    items: Sequence[T],
     now: datetime,
     *,
     as_json: bool,
     title: str,
+    noun: str,
+    to_dicts: Callable[[Sequence[T], datetime], list[dict]],
+    to_table: Callable[[Sequence[T], datetime, str], Table],
     console: Console | None = None,
 ) -> None:
+    """Print a report as JSON, a 'nothing found' line, or a rich table."""
     console = console or Console()
     if as_json:
         # Plain print so rich doesn't add colour or wrapping to machine output.
-        print(json.dumps(prs_as_dicts(prs, now), indent=2))
-    elif not prs:
-        console.print(f"No pull requests found ({title}).")
+        print(json.dumps(to_dicts(items, now), indent=2))
+    elif not items:
+        console.print(f"No {noun} found ({title}).")
     else:
-        console.print(prs_table(prs, now, title))
-
-
-def release_status(release: Release) -> str:
-    # A draft or pre-release is never "latest", so check those first.
-    if release.is_draft:
-        return "draft"
-    if release.is_prerelease:
-        return "pre-release"
-    if release.is_latest:
-        return "latest"
-    return "-"
-
-
-def releases_as_dicts(releases: Sequence[Release], now: datetime) -> list[dict]:
-    return [
-        {
-            "tag": r.tag,
-            "name": r.name,
-            "published_at": r.published_at.isoformat() if r.published_at else None,
-            "created_at": r.created_at.isoformat(),
-            "age_seconds": int(age(r.released_at, now).total_seconds()),
-            "age": format_age(age(r.released_at, now)),
-            "is_latest": r.is_latest,
-            "is_prerelease": r.is_prerelease,
-            "is_draft": r.is_draft,
-        }
-        for r in releases
-    ]
-
-
-def releases_table(releases: Sequence[Release], now: datetime, title: str) -> Table:
-    table = Table(title=title)
-    table.add_column("Tag", style="cyan", no_wrap=True)
-    table.add_column("Name")
-    table.add_column("Age", justify="right", no_wrap=True)
-    table.add_column("Status", no_wrap=True)
-    for r in releases:
-        table.add_row(
-            r.tag,
-            r.name or "-",
-            format_age(age(r.released_at, now)),
-            release_status(r),
-        )
-    return table
-
-
-def render_releases(
-    releases: Sequence[Release],
-    now: datetime,
-    *,
-    as_json: bool,
-    title: str,
-    console: Console | None = None,
-) -> None:
-    console = console or Console()
-    if as_json:
-        # Plain print so rich doesn't add colour or wrapping to machine output.
-        print(json.dumps(releases_as_dicts(releases, now), indent=2))
-    elif not releases:
-        console.print(f"No releases found ({title}).")
-    else:
-        console.print(releases_table(releases, now, title))
+        console.print(to_table(items, now, title))

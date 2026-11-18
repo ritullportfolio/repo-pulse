@@ -24,24 +24,19 @@ Before starting, check you're not on `main` (CLAUDE.md: always work on a branch)
 - Handle gh's edge cases in `from_gh`, not later: `author: null` becomes `"ghost"`, `""` becomes `None`, and ISO timestamps are parsed with `datetime.fromisoformat`.
 - Any time-based logic goes in `src/repo_pulse/metrics.py` and takes `now` as an argument. Never read the system clock there.
 
-## 3. Render functions in `src/repo_pulse/render.py`
+## 3. Report module `src/repo_pulse/reports/<thing>.py`
 
-Mirror the three `prs` functions:
-- `<thing>_as_dicts(items, now)` returns JSON-ready dicts with ISO-format dates.
-- `<thing>_table(items, now, title)` returns a `rich` `Table`.
-- `render_<thing>(items, now, *, as_json, title, console=None)`:
-  - For `--json`, use plain `print(json.dumps(...))`, never `rich`.
-  - If the result is empty, print a "No ... found (title)." line.
-  - Otherwise print the table.
+Copy `reports/prs.py`. Then add it to `REPORTS` in `reports/__init__.py`; don't edit `cli.py`.
 
-## 4. Command inside `create_app` in `src/repo_pulse/cli.py`
+- At module level, define:
+  - `<thing>_as_dicts(items, now)`: JSON-ready dicts with ISO-format dates; use `**age_fields(when, now)` from `render.py` for ages.
+  - `<thing>_table(items, now, title)`: a `rich` `Table`; use `age_cell(when, now)` for the age column.
+  - Any option types, e.g. a `--limit` `Annotated[...]`, named after the report (`PrLimitOpt`, `ReleaseLimitOpt`) because the help text differs per report. Reuse `RepoArg` and `JsonOpt` from `reports/_common.py`. Typer resolves annotations against module globals, so types defined inside `register()` won't work.
+- `register(app, *, runner, clock)` defines `@app.command() def <thing>(...)`:
+  - Fetch with `fetch_or_exit(gh.list_<thing>, repo, ..., runner=runner)`. It handles the error contract (`error: <msg>` on stderr, exit 1).
+  - Output with `render_report(items, clock(), as_json=as_json, title=repo_title(repo, "..."), noun="...", to_dicts=..., to_table=...)`. Never call `utc_now()` directly.
 
-- Define `@app.command() def <thing>(...)` inside `create_app` so it receives the injected `runner` and `clock`.
-- Take the same `repo` argument and the same `--limit` and `--json` options as `prs`.
-- Follow the error contract: wrap the `gh.list_<thing>` call in `except gh.GhError as exc:`, then `typer.echo(f"error: {exc}", err=True)` and `raise typer.Exit(code=1) from None`.
-- Pass `clock()` to the render function. Never call `utc_now()` directly.
-
-## 5. Tests (no network, ever)
+## 4. Tests (no network, ever)
 
 - **Fixture:** save `tests/fixtures/<thing>_list.json` in real `gh --json` output format. Include the edge cases: a `null` author, an empty-string field, and items of different ages relative to `NOW` (`2026-01-15T12:00Z`).
 - **`tests/conftest.py`:** add `<thing>_list_json` and `fake_gh_<thing>` fixtures, like `pr_list_json` and `fake_gh`.
@@ -56,20 +51,21 @@ Mirror the three `prs` functions:
   - Cover the empty result.
   - Cover a gh failure, which should exit 1 with `error:` in the output.
   - Use `FakeGh` and `fixed_clock`; never mock `subprocess`.
+- **`tests/test_reports.py`:** add `<thing>` to the expected list of registered commands.
 - Run `.venv/bin/pytest -q`. Everything must pass.
 
-## 6. README report table
+## 5. README report table
 
 Add a row for the new report to the report table in `README.md`, with the command, what it shows, and its main options. If `README.md` or the table doesn't exist yet, create a `## Reports` table with a `prs` row as well, and tell the user you did.
 
-## 7. `docs/architecture.md`
+## 6. `docs/architecture.md`
 
 - If the new model isn't listed in the Modules table's `models.py` row, add it.
-- Make sure the flowchart has a `CLI -->|<thing>| GH` edge.
-- Add a `## Sequence: repo-pulse <thing> owner/repo` diagram modeled on the `prs` one, with the real function names and the exact `gh ... --json` argument list.
+- Make sure the flowchart has a `Reports -->|<thing>| GH` edge.
+- Add a `## Sequence: repo-pulse <thing> owner/repo` diagram modeled on the `prs` one, with a `reports/<thing>.py` participant between `cli.py` and `gh.py`, the real function names, and the exact `gh ... --json` argument list.
 - If you renamed anything used in the `prs` sequence diagram, update that too.
 
-## 8. Wrap up
+## 7. Wrap up
 
-- Update CLAUDE.md's line "Only the `prs` command exists so far" if it's no longer true.
+- Update the list of existing commands in CLAUDE.md's "What this is" section.
 - Commit with a `feat:` prefix after the tests pass. Don't push unless the user says "push".

@@ -6,11 +6,14 @@ repo-pulse is a Python command-line tool, built with Typer, that reports on GitH
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | Typer app. Parses arguments, wires the pieces together, sets exit codes. |
+| `cli.py` | Typer app: `--version`, the subcommand callback, and a loop that registers every module in `REPORTS`. No report code. |
+| `reports/<name>.py` | One module per report (`prs.py`, `releases.py`). Each has a `register(app, *, runner, clock)` that defines its command, plus that report's JSON rows and table columns. |
+| `reports/__init__.py` | `REPORTS = [prs, releases]`: the list of report modules, in `--help` order. |
+| `reports/_common.py` | Shared command pieces: `RepoArg`, `JsonOpt`, `fetch_or_exit` (the `GhError` → `error:` / exit 1 contract), `repo_title`. |
 | `gh.py` | The only module that runs `gh`. Builds argument lists, runs the subprocess, parses JSON, and turns failures into `GhError`. |
 | `models.py` | Dataclasses: `RepoSummary`, `PullRequest`, `Release`, `Issue`, `Activity`. |
 | `metrics.py` | Pure functions: ages, counts, activity rollups. No I/O. |
-| `render.py` | Turns models into a `rich` table or JSON. |
+| `render.py` | Shared output for every report: `render_report` (JSON / "No … found" / `rich` table), `age_fields`, `age_cell`. |
 
 ## Flowchart
 
@@ -20,31 +23,36 @@ flowchart TD
 
     subgraph repo_pulse [repo_pulse package]
         CLI[cli.py<br/>Typer app]
+        Reports[reports/*.py<br/>one module per report]
+        Common[reports/_common.py<br/>RepoArg, JsonOpt, fetch_or_exit]
         GH[gh.py<br/>run_gh runner]
         Models[models.py<br/>dataclasses]
         Metrics[metrics.py<br/>pure logic]
-        Render[render.py<br/>table / JSON]
+        Render[render.py<br/>render_report: table / JSON]
     end
 
-    CLI -->|summary| GH
-    CLI -->|prs| GH
-    CLI -->|releases| GH
-    CLI -->|issues| GH
-    CLI -->|activity| GH
+    CLI -->|register each module in REPORTS| Reports
+    Reports -.->|uses| Common
+
+    Reports -->|summary| GH
+    Reports -->|prs| GH
+    Reports -->|releases| GH
+    Reports -->|issues| GH
+    Reports -->|activity| GH
 
     GH -->|subprocess.run list args, no shell| GhCLI[[gh CLI]]
     GhCLI -->|HTTPS| GitHub[(GitHub API)]
     GhCLI -->|stdout JSON / stderr + exit code| GH
 
     GH -->|parsed dicts| Models
-    GH -.->|GhError: not installed,<br/>not logged in, repo not found,<br/>non-zero exit| CLI
-    Models --> Metrics
-    Metrics --> Render
-    Models --> Render
+    GH -.->|GhError: not installed,<br/>not logged in, repo not found,<br/>non-zero exit| Reports
+    Models --> Reports
+    Reports -->|items + to_dicts / to_table| Render
+    Render --> Metrics
     Render -->|--json?| Choice{output format}
     Choice -->|default| Table[rich table on stdout]
     Choice -->|--json| JSON[raw JSON on stdout]
-    CLI -.->|error message on stderr,<br/>exit code 1| User
+    Reports -.->|fetch_or_exit: error message on stderr,<br/>exit code 1| User
 
     subgraph tests [tests/]
         Fake[conftest.py<br/>fake gh runner]
@@ -61,6 +69,7 @@ sequenceDiagram
     autonumber
     actor User
     participant CLI as cli.py (Typer)
+    participant Report as reports/prs.py
     participant GH as gh.py
     participant Proc as gh CLI (subprocess)
     participant API as GitHub API
@@ -70,7 +79,8 @@ sequenceDiagram
 
     User->>CLI: repo-pulse prs owner/repo
     CLI->>CLI: parse args (state=open, limit=20, json=False)
-    CLI->>GH: list_prs("owner/repo", state="open", limit=20)
+    CLI->>Report: prs(...) (registered from REPORTS)
+    Report->>GH: list_prs("owner/repo", state="open", limit=20)<br/>via fetch_or_exit (reports/_common.py)
     GH->>Proc: gh pr list --repo owner/repo --state open --limit 20<br/>--json number,title,author,createdAt,reviewDecision,url
     Proc->>API: GraphQL query (gh's stored auth)
     API-->>Proc: PR data
@@ -80,16 +90,16 @@ sequenceDiagram
         GH->>GH: json.loads(stdout)
         GH->>Models: PullRequest.from_gh(item) for each item
         Models-->>GH: list[PullRequest]
-        GH-->>CLI: list[PullRequest]
-        CLI->>Metrics: add ages (now - createdAt)
-        Metrics-->>CLI: rows with age
-        CLI->>Render: render_prs(rows, as_json=False)
+        GH-->>Report: list[PullRequest]
+        Report->>Render: render_report(pull_requests, clock(), as_json=False,<br/>to_dicts=prs_as_dicts, to_table=prs_table)
+        Render->>Metrics: age(created_at, now)
+        Metrics-->>Render: timedelta
         Render-->>User: rich table on stdout
         CLI-->>User: exit code 0
     else gh missing, not logged in, or repo not found
         Proc-->>GH: stderr + non-zero exit (or FileNotFoundError)
-        GH-->>CLI: raise GhError(message)
-        CLI-->>User: one-line error on stderr, exit code 1
+        GH-->>Report: raise GhError(message)
+        Report-->>User: fetch_or_exit: one-line error on stderr, exit code 1
     end
 ```
 
@@ -100,6 +110,7 @@ sequenceDiagram
     autonumber
     actor User
     participant CLI as cli.py (Typer)
+    participant Report as reports/releases.py
     participant GH as gh.py
     participant Proc as gh CLI (subprocess)
     participant API as GitHub API
@@ -109,7 +120,8 @@ sequenceDiagram
 
     User->>CLI: repo-pulse releases owner/repo
     CLI->>CLI: parse args (limit=10, json=False)
-    CLI->>GH: list_releases("owner/repo", limit=10)
+    CLI->>Report: releases(...) (registered from REPORTS)
+    Report->>GH: list_releases("owner/repo", limit=10)<br/>via fetch_or_exit (reports/_common.py)
     GH->>Proc: gh release list --repo owner/repo --limit 10<br/>--json tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft
     Proc->>API: GraphQL query (gh's stored auth)
     API-->>Proc: release data, newest first
@@ -119,15 +131,15 @@ sequenceDiagram
         GH->>GH: json.loads(stdout)
         GH->>Models: Release.from_gh(item) for each item<br/>(name "" → None, zero publishedAt → None)
         Models-->>GH: list[Release]
-        GH-->>CLI: list[Release]
-        CLI->>Render: render_releases(releases, clock(), as_json=False)
+        GH-->>Report: list[Release]
+        Report->>Render: render_report(release_list, clock(), as_json=False,<br/>to_dicts=releases_as_dicts, to_table=releases_table)
         Render->>Metrics: age(released_at, now)<br/>(publishedAt, or createdAt for drafts)
         Metrics-->>Render: timedelta
         Render-->>User: rich table on stdout (status: latest / pre-release / draft)
         CLI-->>User: exit code 0
     else gh missing, not logged in, or repo not found
         Proc-->>GH: stderr + non-zero exit (or FileNotFoundError)
-        GH-->>CLI: raise GhError(message)
-        CLI-->>User: one-line error on stderr, exit code 1
+        GH-->>Report: raise GhError(message)
+        Report-->>User: fetch_or_exit: one-line error on stderr, exit code 1
     end
 ```
