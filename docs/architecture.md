@@ -80,7 +80,7 @@ sequenceDiagram
     User->>CLI: repo-pulse prs owner/repo
     CLI->>CLI: parse args (state=open, limit=20, json=False)
     CLI->>Report: prs(...) (registered from REPORTS)
-    Report->>GH: fetch_or_exit(list_prs, "owner/repo", state="open", limit=20)
+    Report->>GH: list_prs("owner/repo", state="open", limit=20)<br/>via fetch_or_exit (reports/_common.py)
     GH->>Proc: gh pr list --repo owner/repo --state open --limit 20<br/>--json number,title,author,createdAt,reviewDecision,url
     Proc->>API: GraphQL query (gh's stored auth)
     API-->>Proc: PR data
@@ -91,7 +91,7 @@ sequenceDiagram
         GH->>Models: PullRequest.from_gh(item) for each item
         Models-->>GH: list[PullRequest]
         GH-->>Report: list[PullRequest]
-        Report->>Render: render_report(prs, clock(), as_json=False,<br/>to_dicts=prs_as_dicts, to_table=prs_table)
+        Report->>Render: render_report(pull_requests, clock(), as_json=False,<br/>to_dicts=prs_as_dicts, to_table=prs_table)
         Render->>Metrics: age(created_at, now)
         Metrics-->>Render: timedelta
         Render-->>User: rich table on stdout
@@ -121,7 +121,7 @@ sequenceDiagram
     User->>CLI: repo-pulse releases owner/repo
     CLI->>CLI: parse args (limit=10, json=False)
     CLI->>Report: releases(...) (registered from REPORTS)
-    Report->>GH: fetch_or_exit(list_releases, "owner/repo", limit=10)
+    Report->>GH: list_releases("owner/repo", limit=10)<br/>via fetch_or_exit (reports/_common.py)
     GH->>Proc: gh release list --repo owner/repo --limit 10<br/>--json tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft
     Proc->>API: GraphQL query (gh's stored auth)
     API-->>Proc: release data, newest first
@@ -132,7 +132,7 @@ sequenceDiagram
         GH->>Models: Release.from_gh(item) for each item<br/>(name "" → None, zero publishedAt → None)
         Models-->>GH: list[Release]
         GH-->>Report: list[Release]
-        Report->>Render: render_report(releases, clock(), as_json=False,<br/>to_dicts=releases_as_dicts, to_table=releases_table)
+        Report->>Render: render_report(release_list, clock(), as_json=False,<br/>to_dicts=releases_as_dicts, to_table=releases_table)
         Render->>Metrics: age(released_at, now)<br/>(publishedAt, or createdAt for drafts)
         Metrics-->>Render: timedelta
         Render-->>User: rich table on stdout (status: latest / pre-release / draft)

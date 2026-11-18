@@ -31,7 +31,7 @@ Copy `reports/prs.py`. Then add it to `REPORTS` in `reports/__init__.py`; don't 
 - At module level, define:
   - `<thing>_as_dicts(items, now)`: JSON-ready dicts with ISO-format dates; use `**age_fields(when, now)` from `render.py` for ages.
   - `<thing>_table(items, now, title)`: a `rich` `Table`; use `age_cell(when, now)` for the age column.
-  - Any option types, e.g. a `--limit` `Annotated[...]`. Reuse `RepoArg` and `JsonOpt` from `reports/_common.py`. Typer resolves annotations against module globals, so types defined inside `register()` won't work.
+  - Any option types, e.g. a `--limit` `Annotated[...]`, named after the report (`PrLimitOpt`, `ReleaseLimitOpt`) because the help text differs per report. Reuse `RepoArg` and `JsonOpt` from `reports/_common.py`. Typer resolves annotations against module globals, so types defined inside `register()` won't work.
 - `register(app, *, runner, clock)` defines `@app.command() def <thing>(...)`:
   - Fetch with `fetch_or_exit(gh.list_<thing>, repo, ..., runner=runner)`. It handles the error contract (`error: <msg>` on stderr, exit 1).
   - Output with `render_report(items, clock(), as_json=as_json, title=repo_title(repo, "..."), noun="...", to_dicts=..., to_table=...)`. Never call `utc_now()` directly.
@@ -61,7 +61,7 @@ Add a row for the new report to the report table in `README.md`, with the comman
 ## 6. `docs/architecture.md`
 
 - If the new model isn't listed in the Modules table's `models.py` row, add it.
-- Make sure the flowchart has a `CLI -->|<thing>| GH` edge.
+- Make sure the flowchart has a `Reports -->|<thing>| GH` edge.
 - Add a `## Sequence: repo-pulse <thing> owner/repo` diagram modeled on the `prs` one, with a `reports/<thing>.py` participant between `cli.py` and `gh.py`, the real function names, and the exact `gh ... --json` argument list.
 - If you renamed anything used in the `prs` sequence diagram, update that too.
 

@@ -25,7 +25,7 @@ class PrState(str, Enum):
 
 
 StateOpt = Annotated[PrState, typer.Option(help="Filter by PR state.")]
-LimitOpt = Annotated[int, typer.Option(min=1, help="Maximum number of PRs to list.")]
+PrLimitOpt = Annotated[int, typer.Option(min=1, help="Maximum number of PRs to list.")]
 
 REVIEW_LABELS = {
     "APPROVED": "approved",
@@ -78,7 +78,7 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
     def prs(
         repo: RepoArg = None,
         state: StateOpt = PrState.open,
-        limit: LimitOpt = 20,
+        limit: PrLimitOpt = 20,
         as_json: JsonOpt = False,
     ) -> None:
         """List recent pull requests with author, age and review status."""

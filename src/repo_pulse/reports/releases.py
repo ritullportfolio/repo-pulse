@@ -15,7 +15,7 @@ from repo_pulse.models import Release
 from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports._common import JsonOpt, RepoArg, fetch_or_exit, repo_title
 
-LimitOpt = Annotated[int, typer.Option(min=1, help="Maximum number of releases to list.")]
+ReleaseLimitOpt = Annotated[int, typer.Option(min=1, help="Maximum number of releases to list.")]
 
 
 def release_status(release: Release) -> str:
@@ -65,7 +65,7 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
     @app.command()
     def releases(
         repo: RepoArg = None,
-        limit: LimitOpt = 10,
+        limit: ReleaseLimitOpt = 10,
         as_json: JsonOpt = False,
     ) -> None:
         """List the latest releases with tag, name, age and status."""
