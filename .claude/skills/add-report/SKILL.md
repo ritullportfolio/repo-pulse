@@ -31,10 +31,12 @@ Copy `reports/prs.py`. Then add it to `REPORTS` in `reports/__init__.py`; don't 
 - At module level, define:
   - `<thing>_as_dicts(items, now)`: JSON-ready dicts with ISO-format dates; use `**age_fields(when, now)` from `render.py` for ages.
   - `<thing>_table(items, now, title)`: a `rich` `Table`; use `age_cell(when, now)` for the age column.
-  - Any option types, e.g. a `--limit` `Annotated[...]`, named after the report (`PrLimitOpt`, `ReleaseLimitOpt`) because the help text differs per report. Reuse `RepoArg` and `JsonOpt` from `reports/_common.py`. Typer resolves annotations against module globals, so types defined inside `register()` won't work.
+  - Any option types, e.g. a `--limit` `Annotated[...]`, named after the report (`PrLimitOpt`, `ReleaseLimitOpt`) because the help text differs per report. Reuse `RepoArg`, `SinceOpt` and `JsonOpt` from `reports/_common.py`; every report takes `--since`. Typer resolves annotations against module globals, so types defined inside `register()` won't work.
 - `register(app, *, runner, clock)` defines `@app.command() def <thing>(...)`:
-  - Fetch with `fetch_or_exit(gh.list_<thing>, repo, ..., runner=runner)`. It handles the error contract (`error: <msg>` on stderr, exit 1).
-  - Output with `render_report(items, clock(), as_json=as_json, title=repo_title(repo, "..."), noun="...", to_dicts=..., to_table=...)`. Never call `utc_now()` directly.
+  - Start with `now = clock()` and `cutoff = since_cutoff(since, now)`. A bad `--since` becomes a usage error (exit 2) before gh runs.
+  - Fetch with `fetch_or_exit(gh.list_<thing>, repo, ..., runner=runner)`. It handles the error contract (`error: <msg>` on stderr, exit 1). If gh can filter by date (as `gh pr list --search` can), pass the cutoff to `gh.list_<thing>`.
+  - Always filter with `is_since(<item time>, cutoff)` from `metrics.py` as well, even when gh filtered too, because gh's date filters are coarser.
+  - Output with `render_report(items, now, as_json=as_json, title=repo_title(repo, "...", since), noun="...", to_dicts=..., to_table=...)`. Never call `utc_now()` directly.
 
 ## 4. Tests (no network, ever)
 
@@ -50,6 +52,7 @@ Copy `reports/prs.py`. Then add it to `REPORTS` in `reports/__init__.py`; don't 
   - Use `invoke(fake, fixed_clock, "<thing>", ...)` to cover both the table output and `--json` output.
   - Cover the empty result.
   - Cover a gh failure, which should exit 1 with `error:` in the output.
+  - Cover `--since`: older fixture items are dropped (and any gh-side filter argument is passed). Add `<thing>` to the `command` list in `test_invalid_since_is_a_usage_error_before_gh_runs`.
   - Use `FakeGh` and `fixed_clock`; never mock `subprocess`.
 - **`tests/test_reports.py`:** add `<thing>` to the expected list of registered commands.
 - Run `.venv/bin/pytest -q`. Everything must pass.

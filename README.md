@@ -16,9 +16,15 @@ Every report takes an optional `OWNER/REPO` (defaults to the current directory's
 
 | Command | Shows | Main options |
 |---|---|---|
-| `repo-pulse prs [OWNER/REPO]` | Recent pull requests with author, age and review status | `--state open\|closed\|merged\|all` (default `open`), `--limit` (default 20) |
-| `repo-pulse releases [OWNER/REPO]` | Latest releases with tag, name, age and status (latest / pre-release / draft) | `--limit` (default 10) |
+| `repo-pulse prs [OWNER/REPO]` | Recent pull requests with author, age and review status | `--state open\|closed\|merged\|all` (default `open`), `--limit` (default 20), `--since 7d\|2026-10-01` |
+| `repo-pulse releases [OWNER/REPO]` | Latest releases with tag, name, age and status (latest / pre-release / draft) | `--limit` (default 10), `--since 7d\|2026-10-01` |
 
 ```sh
 .venv/bin/repo-pulse releases cli/cli --limit 5
+.venv/bin/repo-pulse prs cli/cli --since 7d
 ```
+
+`--since` takes a duration (`30m`, `12h`, `7d`, `2w`, `1y`) or an ISO date or datetime. Dates and datetimes without a timezone are UTC: `2026-10-01` means midnight UTC. For local midnight, add an offset, e.g. `2026-10-01T00:00+05:30`.
+
+- `prs` asks GitHub for PRs created on or after the cutoff's date, then trims to the exact time. For cutoffs that aren't whole days, `--limit N` can return fewer than N PRs.
+- `releases` filters the `--limit` latest releases, so raise `--limit` to look further back.
