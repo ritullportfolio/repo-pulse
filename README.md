@@ -10,9 +10,22 @@ Requires Python 3.11+ and a logged-in `gh` (`gh auth login`).
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ```
 
+## Config file
+
+Optionally set a default repo so you don't have to type `OWNER/REPO`. It is a TOML file:
+
+```toml
+# ~/.config/repo-pulse/config.toml
+default_repo = "cli/cli"
+```
+
+The repo comes from, highest priority first: the `OWNER/REPO` argument, `default_repo` from the config file, then the current directory's repo.
+
+The file is looked up at `--config PATH`, then the `REPO_PULSE_CONFIG` environment variable, then `$XDG_CONFIG_HOME/repo-pulse/config.toml`, then `~/.config/repo-pulse/config.toml`. A missing file is fine. A file with invalid TOML (or a `default_repo` that isn't `OWNER/REPO`) prints `error: ...` and exits 1; it is only read when no `OWNER/REPO` argument is given.
+
 ## Reports
 
-Every report takes an optional `OWNER/REPO` (defaults to the current directory's repo) and `--json` for machine-readable output.
+Every report takes an optional `OWNER/REPO` (defaults to the config file's `default_repo`, then the current directory's repo) and `--json` for machine-readable output.
 
 | Command | Shows | Main options |
 |---|---|---|

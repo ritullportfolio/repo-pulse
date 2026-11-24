@@ -6,7 +6,8 @@ repo-pulse is a Python command-line tool, built with Typer, that reports on GitH
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | Typer app: `--version`, the subcommand callback, and a loop that registers every module in `REPORTS`. No report code. |
+| `config.py` | Optional TOML config (`default_repo`): `load_config`, `default_config_path`. `reports/_common.py:resolve_repo` applies it when no repo argument is given. |
+| `cli.py` | Typer app: `--version`, `--config`, the subcommand callback, and a loop that registers every module in `REPORTS`. No report code. |
 | `reports/<name>.py` | One module per report (`prs.py`, `releases.py`). Each has a `register(app, *, runner, clock)` that defines its command, plus that report's JSON rows and table columns. |
 | `reports/__init__.py` | `REPORTS = [prs, releases]`: the list of report modules, in `--help` order. |
 | `reports/_common.py` | Shared command pieces: `RepoArg`, `JsonOpt`, `SinceOpt`, `since_cutoff` (bad `--since` → usage error, exit 2), `fetch_or_exit` (the `GhError` → `error:` / exit 1 contract), `repo_title`. |
@@ -82,6 +83,7 @@ sequenceDiagram
     User->>CLI: repo-pulse prs owner/repo
     CLI->>CLI: parse args (state=open, limit=20, since=None, json=False)
     CLI->>Report: prs(...) (registered from REPORTS)
+    Report->>Report: repo = resolve_repo(ctx, repo)<br/>(argument, else config default_repo, else current dir)
     Report->>Report: now = clock()
     opt --since given (e.g. 7d)
         Report->>Metrics: parse_since(since, now)<br/>via since_cutoff (reports/_common.py)
@@ -134,6 +136,7 @@ sequenceDiagram
     User->>CLI: repo-pulse releases owner/repo
     CLI->>CLI: parse args (limit=10, since=None, json=False)
     CLI->>Report: releases(...) (registered from REPORTS)
+    Report->>Report: repo = resolve_repo(ctx, repo)<br/>(argument, else config default_repo, else current dir)
     Report->>Report: now = clock()
     opt --since given (e.g. 2026-10-01)
         Report->>Metrics: parse_since(since, now)<br/>via since_cutoff (reports/_common.py)

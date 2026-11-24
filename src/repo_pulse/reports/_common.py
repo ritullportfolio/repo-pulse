@@ -8,12 +8,15 @@ globals, so annotation types defined inside `register()` would not be found.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Optional, TypeVar
 
 import typer
 
 from repo_pulse import gh
+from repo_pulse.config import Config, ConfigError, load_config
 from repo_pulse.metrics import parse_since
 
 T = TypeVar("T")
@@ -22,7 +25,10 @@ RepoArg = Annotated[
     Optional[str],
     typer.Argument(
         metavar="[OWNER/REPO]",
-        help="Repository to inspect. Defaults to the current directory's repo.",
+        help=(
+            "Repository to inspect. Defaults to default_repo from the config file, "
+            "then the current directory's repo."
+        ),
         show_default=False,
     ),
 ]
@@ -40,6 +46,37 @@ SinceOpt = Annotated[
         show_default=False,
     ),
 ]
+
+
+@dataclass
+class AppState:
+    """Stored on the Typer context by the root callback.
+
+    `config` is injected by tests; otherwise it is loaded lazily from `config_path`.
+    """
+
+    config: Config | None = None
+    config_path: Path | None = None
+
+
+def resolve_repo(ctx: typer.Context, repo: str | None) -> str | None:
+    """Pick the repo: the argument, else the config's default_repo, else None (gh's cwd).
+
+    A bad config file prints `error: <msg>` to stderr and exits 1. The file is only
+    read when no repo argument was given.
+    """
+    if repo is not None:
+        return repo
+    state = ctx.find_object(AppState)
+    if state is None:
+        return None
+    try:
+        if state.config is None:
+            state.config = load_config(state.config_path) if state.config_path else Config()
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    return state.config.default_repo
 
 
 def since_cutoff(since: str | None, now: datetime) -> datetime | None:

@@ -7,13 +7,16 @@ can inject fakes; the module-level `app` uses the real ones.
 
 from __future__ import annotations
 
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Optional
 
 import typer
 
 from repo_pulse import __version__, gh
+from repo_pulse.config import Config, default_config_path
 from repo_pulse.metrics import Clock, utc_now
 from repo_pulse.reports import REPORTS
+from repo_pulse.reports._common import AppState
 
 
 def _print_version(value: bool) -> None:
@@ -24,7 +27,12 @@ def _print_version(value: bool) -> None:
         raise typer.Exit()
 
 
-def create_app(runner: gh.Runner | None = None, clock: Clock = utc_now) -> typer.Typer:
+def create_app(
+    runner: gh.Runner | None = None,
+    clock: Clock = utc_now,
+    config: Config | None = None,
+) -> typer.Typer:
+    """`config` is injected by tests; when None, the config file is read lazily."""
     app = typer.Typer(
         help="Quick health reports for GitHub repositories, powered by the gh CLI.",
         no_args_is_help=True,
@@ -33,6 +41,20 @@ def create_app(runner: gh.Runner | None = None, clock: Clock = utc_now) -> typer
 
     @app.callback()
     def main(
+        ctx: typer.Context,
+        config_file: Annotated[
+            Optional[Path],
+            typer.Option(
+                "--config",
+                envvar="REPO_PULSE_CONFIG",
+                dir_okay=False,
+                help=(
+                    "Config file (TOML). Default: $XDG_CONFIG_HOME/repo-pulse/config.toml "
+                    "or ~/.config/repo-pulse/config.toml."
+                ),
+                show_default=False,
+            ),
+        ] = None,
         version: Annotated[
             bool,
             typer.Option(
@@ -44,6 +66,10 @@ def create_app(runner: gh.Runner | None = None, clock: Clock = utc_now) -> typer
         ] = False,
     ) -> None:
         """Quick health reports for GitHub repositories, powered by the gh CLI."""
+        ctx.obj = AppState(
+            config=config,
+            config_path=config_file or (None if config is not None else default_config_path()),
+        )
 
     for report in REPORTS:
         report.register(app, runner=runner, clock=clock)

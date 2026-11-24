@@ -20,6 +20,7 @@ from repo_pulse.reports._common import (
     SinceOpt,
     fetch_or_exit,
     repo_title,
+    resolve_repo,
     since_cutoff,
 )
 
@@ -83,6 +84,7 @@ def prs_table(prs: Sequence[PullRequest], now: datetime, title: str) -> Table:
 def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> None:
     @app.command()
     def prs(
+        ctx: typer.Context,
         repo: RepoArg = None,
         state: StateOpt = PrState.open,
         limit: PrLimitOpt = 20,
@@ -90,6 +92,7 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
         as_json: JsonOpt = False,
     ) -> None:
         """List recent pull requests with author, age and review status."""
+        repo = resolve_repo(ctx, repo)
         now = clock()
         cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
         pull_requests = fetch_or_exit(
