@@ -11,7 +11,7 @@ import typer
 from rich.table import Table
 
 from repo_pulse import gh
-from repo_pulse.metrics import Clock, is_since
+from repo_pulse.metrics import Clock, is_at_or_after
 from repo_pulse.models import PullRequest
 from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports._common import (
@@ -93,10 +93,10 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
         now = clock()
         cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
         pull_requests = fetch_or_exit(
-            gh.list_prs, repo, state=state.value, limit=limit, since=cutoff, runner=runner
+            gh.list_prs, repo, state=state.value, limit=limit, cutoff=cutoff, runner=runner
         )
         # gh's search is by date only, so trim to the exact cutoff here.
-        pull_requests = [pr for pr in pull_requests if is_since(pr.created_at, cutoff)]
+        pull_requests = [pr for pr in pull_requests if is_at_or_after(pr.created_at, cutoff)]
         render_report(
             pull_requests,
             now,

@@ -209,6 +209,38 @@ def test_releases_since_drops_older_releases(fake_gh_releases, fixed_clock) -> N
     assert "--search" not in fake_gh_releases.calls[0]
 
 
+def test_prs_since_with_offset_searches_from_the_utc_date(fake_gh, fixed_clock) -> None:
+    # 05:00 at UTC+05:30 on the 15th is 23:30 UTC on the 14th.
+    result = invoke(
+        fake_gh, fixed_clock, "prs", "acme/widgets", "--since", "2026-01-15T05:00+05:30", "--json"
+    )
+    assert result.exit_code == 0, result.output
+    call = fake_gh.calls[0]
+    assert call[call.index("--search") + 1] == "created:>=2026-01-14"
+    # #42 (2026-01-13T12:00Z) is before the cutoff; only #41 (2026-01-15T09:00Z) is after.
+    assert [pr["number"] for pr in json.loads(result.output)] == [41]
+
+
+def _release(tag: str, created: str, published: str) -> dict:
+    return {
+        "tagName": tag, "name": tag, "createdAt": created, "publishedAt": published,
+        "isLatest": False, "isPrerelease": False, "isDraft": False,
+    }
+
+
+def test_releases_since_checks_every_release_not_just_up_to_the_first_old_one(fixed_clock) -> None:
+    # gh orders by creation date, so a release created long ago but published
+    # recently can come after an old one. It must still be kept.
+    fake = FakeGh(stdout=json.dumps([
+        _release("v3.0.0", "2026-01-14T10:00:00Z", "2026-01-14T10:00:00Z"),  # new
+        _release("v2.0.0", "2025-06-01T10:00:00Z", "2025-06-01T10:00:00Z"),  # old
+        _release("v2.5.0", "2025-01-01T10:00:00Z", "2026-01-15T10:00:00Z"),  # old draft, published today
+    ]))
+    result = invoke(fake, fixed_clock, "releases", "acme/widgets", "--since", "7d", "--json")
+    assert result.exit_code == 0, result.output
+    assert [r["tag"] for r in json.loads(result.output)] == ["v3.0.0", "v2.5.0"]
+
+
 def test_since_title_shows_in_empty_message(fake_gh_releases, fixed_clock) -> None:
     result = invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets", "--since", "10m")
     assert result.exit_code == 0, result.output
@@ -222,7 +254,7 @@ def test_since_title_shows_in_table(fake_gh, fixed_clock) -> None:
 
 
 @pytest.mark.parametrize("command", ["prs", "releases"])
-@pytest.mark.parametrize("value", ["soon", "0d", "2026-13-01"])
+@pytest.mark.parametrize("value", ["soon", "0d", "2026-13-01", "3000y"])
 def test_invalid_since_is_a_usage_error_before_gh_runs(command, value, fixed_clock) -> None:
     fake = FakeGh()
     result = invoke(fake, fixed_clock, command, "acme/widgets", "--since", value)

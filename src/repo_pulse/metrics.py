@@ -56,12 +56,19 @@ def parse_since(value: str, now: datetime) -> datetime:
     date ('2026-10-01', meaning midnight UTC) or an ISO datetime (no timezone
     means UTC). Raises ValueError with a user-facing message otherwise.
     """
-    text = value.strip()
+    try:
+        return _parse_since(value.strip(), now)
+    except OverflowError:
+        # e.g. 3000y, or an offset that pushes a datetime past year 1 or 9999.
+        raise ValueError(f"{value!r}: too far in the past or future") from None
+
+
+def _parse_since(text: str, now: datetime) -> datetime:
     match = _DURATION_RE.fullmatch(text)
     if match:
         count = int(match.group(1))
         if count == 0:
-            raise ValueError(f"{value!r}: duration must be greater than zero")
+            raise ValueError(f"{text!r}: duration must be greater than zero")
         return now - count * _SINCE_UNITS[match.group(2)]
 
     try:
@@ -70,12 +77,12 @@ def parse_since(value: str, now: datetime) -> datetime:
             return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        raise ValueError(f"{value!r}: {_SINCE_HELP}") from None
+        raise ValueError(f"{text!r}: {_SINCE_HELP}") from None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 
-def is_since(when: datetime, cutoff: datetime | None) -> bool:
+def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
     """True if `when` is at or after `cutoff`; always True with no cutoff."""
     return cutoff is None or when >= cutoff

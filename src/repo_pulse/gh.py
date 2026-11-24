@@ -62,20 +62,20 @@ def list_prs(
     repo: str | None,
     state: str = "open",
     limit: int = 20,
-    since: datetime | None = None,
+    cutoff: datetime | None = None,
     runner: Runner | None = None,
 ) -> list[PullRequest]:
     """List pull requests. With repo=None, gh uses the current directory's repo.
 
-    With `since`, GitHub only returns PRs created on or after that UTC *date*;
+    With a `cutoff`, GitHub only returns PRs created on or after that UTC *date*;
     the search has no finer precision, so callers trim to the exact time.
     """
     args = ["pr", "list"]
     if repo:
         args += ["--repo", repo]
     args += ["--state", state, "--limit", str(limit), "--json", ",".join(PR_FIELDS)]
-    if since is not None:
-        args += ["--search", f"created:>={since.astimezone(timezone.utc).date().isoformat()}"]
+    if cutoff is not None:
+        args += ["--search", f"created:>={cutoff.astimezone(timezone.utc).date().isoformat()}"]
 
     data = run_gh(args, runner)
     if not isinstance(data, list):

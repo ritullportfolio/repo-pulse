@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from repo_pulse.metrics import age, format_age
-from repo_pulse.metrics import is_since, parse_since
+from repo_pulse.metrics import is_at_or_after, parse_since
 from tests.conftest import NOW
 
 
@@ -38,7 +38,7 @@ def test_age_is_never_negative() -> None:
     assert age(NOW + timedelta(minutes=5), NOW) == timedelta(0)
 
 
-# --- parse_since / is_since ------------------------------------------------------
+# --- parse_since / is_at_or_after ------------------------------------------------
 
 UTC = timezone.utc
 
@@ -82,14 +82,22 @@ def test_parse_since_rejects_bad_values(value: str) -> None:
         parse_since(value, NOW)
 
 
+@pytest.mark.parametrize(
+    "value", ["3000y", "99999999999d", "0001-01-01T00:00+05:00", "9999-12-31T23:00-05:00"]
+)
+def test_parse_since_rejects_values_outside_the_calendar(value: str) -> None:
+    with pytest.raises(ValueError, match="too far in the past or future"):
+        parse_since(value, NOW)
+
+
 def test_parse_since_rejects_zero_duration() -> None:
     with pytest.raises(ValueError, match="greater than zero"):
         parse_since("0d", NOW)
 
 
-def test_is_since() -> None:
+def test_is_at_or_after() -> None:
     cutoff = NOW - timedelta(days=1)
-    assert is_since(NOW, cutoff)
-    assert is_since(cutoff, cutoff)  # exactly at the cutoff counts as newer
-    assert not is_since(cutoff - timedelta(seconds=1), cutoff)
-    assert is_since(datetime(2000, 1, 1, tzinfo=UTC), None)
+    assert is_at_or_after(NOW, cutoff)
+    assert is_at_or_after(cutoff, cutoff)  # exactly at the cutoff is kept
+    assert not is_at_or_after(cutoff - timedelta(seconds=1), cutoff)
+    assert is_at_or_after(datetime(2000, 1, 1, tzinfo=UTC), None)

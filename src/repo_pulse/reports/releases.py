@@ -10,7 +10,7 @@ import typer
 from rich.table import Table
 
 from repo_pulse import gh
-from repo_pulse.metrics import Clock, is_since
+from repo_pulse.metrics import Clock, is_at_or_after
 from repo_pulse.models import Release
 from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports._common import (
@@ -83,7 +83,7 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
         # gh release list can't filter by date. Check every item rather than stopping
         # at the first old one: gh sorts by creation date, but released_at prefers
         # publishedAt, so the list isn't strictly ordered by it.
-        release_list = [r for r in release_list if is_since(r.released_at, cutoff)]
+        release_list = [r for r in release_list if is_at_or_after(r.released_at, cutoff)]
         render_report(
             release_list,
             now,

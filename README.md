@@ -26,5 +26,5 @@ Every report takes an optional `OWNER/REPO` (defaults to the current directory's
 
 `--since` takes a duration (`30m`, `12h`, `7d`, `2w`, `1y`) or an ISO date or datetime. Dates and datetimes without a timezone are UTC: `2026-10-01` means midnight UTC. For local midnight, add an offset, e.g. `2026-10-01T00:00+05:30`.
 
-- `prs` asks GitHub for PRs created on or after the cutoff's date, then trims to the exact time. For cutoffs that aren't whole days, `--limit N` can return fewer than N PRs.
+- `prs` asks GitHub for PRs created on or after the cutoff's date, then trims to the exact time. Unless the cutoff is exactly midnight UTC (a plain date like `2026-10-01`), `--limit N` can return fewer than N PRs. Even `7d` counts back from the current time, not from midnight.
 - `releases` filters the `--limit` latest releases, so raise `--limit` to look further back.

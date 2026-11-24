@@ -33,7 +33,10 @@ SinceOpt = Annotated[
     Optional[str],
     typer.Option(
         metavar="DURATION|DATE",
-        help="Only show items newer than this: 30m, 12h, 7d, 2w, 1y, or an ISO date/datetime (UTC).",
+        help=(
+            "Only show items from this point on: 30m, 12h, 7d, 2w, 1y, "
+            "or an ISO date/datetime (UTC unless an offset is given)."
+        ),
         show_default=False,
     ),
 ]

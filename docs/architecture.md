@@ -12,7 +12,7 @@ repo-pulse is a Python command-line tool, built with Typer, that reports on GitH
 | `reports/_common.py` | Shared command pieces: `RepoArg`, `JsonOpt`, `SinceOpt`, `since_cutoff` (bad `--since` → usage error, exit 2), `fetch_or_exit` (the `GhError` → `error:` / exit 1 contract), `repo_title`. |
 | `gh.py` | The only module that runs `gh`. Builds argument lists, runs the subprocess, parses JSON, and turns failures into `GhError`. |
 | `models.py` | Dataclasses: `RepoSummary`, `PullRequest`, `Release`, `Issue`, `Activity`. |
-| `metrics.py` | Pure functions: ages, `--since` parsing (`parse_since`, `is_since`), counts, activity rollups. No I/O. |
+| `metrics.py` | Pure functions: ages, `--since` parsing (`parse_since`, `is_at_or_after`), counts, activity rollups. No I/O. |
 | `render.py` | Shared output for every report: `render_report` (JSON / "No … found" / `rich` table), `age_fields`, `age_cell`. |
 
 ## Flowchart
@@ -24,7 +24,7 @@ flowchart TD
     subgraph repo_pulse [repo_pulse package]
         CLI[cli.py<br/>Typer app]
         Reports[reports/*.py<br/>one module per report]
-        Common[reports/_common.py<br/>RepoArg, JsonOpt, SinceOpt, fetch_or_exit]
+        Common[reports/_common.py<br/>RepoArg, JsonOpt, SinceOpt,<br/>since_cutoff, fetch_or_exit]
         GH[gh.py<br/>run_gh runner]
         Models[models.py<br/>dataclasses]
         Metrics[metrics.py<br/>pure logic]
@@ -33,6 +33,8 @@ flowchart TD
 
     CLI -->|register each module in REPORTS| Reports
     Reports -.->|uses| Common
+    Common -->|parse_since| Metrics
+    Reports -->|is_at_or_after| Metrics
 
     Reports -->|summary| GH
     Reports -->|prs| GH
@@ -85,7 +87,7 @@ sequenceDiagram
         Report->>Metrics: parse_since(since, now)<br/>via since_cutoff (reports/_common.py)
         Metrics-->>Report: cutoff datetime (bad value → usage error, exit 2, gh never runs)
     end
-    Report->>GH: list_prs("owner/repo", state="open", limit=20, since=cutoff)<br/>via fetch_or_exit (reports/_common.py)
+    Report->>GH: list_prs("owner/repo", state="open", limit=20, cutoff=cutoff)<br/>via fetch_or_exit (reports/_common.py)
     GH->>Proc: gh pr list --repo owner/repo --state open --limit 20<br/>--json number,title,author,createdAt,reviewDecision,url
     opt since given
         Note over GH,Proc: + --search "created:>=YYYY-MM-DD" (cutoff's UTC date)
@@ -100,7 +102,7 @@ sequenceDiagram
         Models-->>GH: list[PullRequest]
         GH-->>Report: list[PullRequest]
         opt since given
-            Report->>Metrics: is_since(created_at, cutoff) for each PR<br/>(search is by date, so trim to the exact time)
+            Report->>Metrics: is_at_or_after(created_at, cutoff) for each PR<br/>(search is by date, so trim to the exact time)
         end
         Report->>Render: render_report(pull_requests, now, as_json=False,<br/>to_dicts=prs_as_dicts, to_table=prs_table)
         Render->>Metrics: age(created_at, now)
@@ -149,7 +151,7 @@ sequenceDiagram
         Models-->>GH: list[Release]
         GH-->>Report: list[Release]
         opt since given
-            Report->>Metrics: is_since(released_at, cutoff) for each release<br/>(gh release list has no date filter)
+            Report->>Metrics: is_at_or_after(released_at, cutoff) for each release<br/>(gh release list has no date filter)
         end
         Report->>Render: render_report(release_list, now, as_json=False,<br/>to_dicts=releases_as_dicts, to_table=releases_table)
         Render->>Metrics: age(released_at, now)<br/>(publishedAt, or createdAt for drafts)

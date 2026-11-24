@@ -35,7 +35,7 @@ Copy `reports/prs.py`. Then add it to `REPORTS` in `reports/__init__.py`; don't 
 - `register(app, *, runner, clock)` defines `@app.command() def <thing>(...)`:
   - Start with `now = clock()` and `cutoff = since_cutoff(since, now)`. A bad `--since` becomes a usage error (exit 2) before gh runs.
   - Fetch with `fetch_or_exit(gh.list_<thing>, repo, ..., runner=runner)`. It handles the error contract (`error: <msg>` on stderr, exit 1). If gh can filter by date (as `gh pr list --search` can), pass the cutoff to `gh.list_<thing>`.
-  - Always filter with `is_since(<item time>, cutoff)` from `metrics.py` as well, even when gh filtered too, because gh's date filters are coarser.
+  - Always filter with `is_at_or_after(<item time>, cutoff)` from `metrics.py` as well, even when gh filtered too, because gh's date filters are coarser.
   - Output with `render_report(items, now, as_json=as_json, title=repo_title(repo, "...", since), noun="...", to_dicts=..., to_table=...)`. Never call `utc_now()` directly.
 
 ## 4. Tests (no network, ever)
