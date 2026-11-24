@@ -10,10 +10,17 @@ import typer
 from rich.table import Table
 
 from repo_pulse import gh
-from repo_pulse.metrics import Clock
+from repo_pulse.metrics import Clock, is_at_or_after
 from repo_pulse.models import Release
 from repo_pulse.render import age_cell, age_fields, render_report
-from repo_pulse.reports._common import JsonOpt, RepoArg, fetch_or_exit, repo_title
+from repo_pulse.reports._common import (
+    JsonOpt,
+    RepoArg,
+    SinceOpt,
+    fetch_or_exit,
+    repo_title,
+    since_cutoff,
+)
 
 ReleaseLimitOpt = Annotated[int, typer.Option(min=1, help="Maximum number of releases to list.")]
 
@@ -66,15 +73,22 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
     def releases(
         repo: RepoArg = None,
         limit: ReleaseLimitOpt = 10,
+        since: SinceOpt = None,
         as_json: JsonOpt = False,
     ) -> None:
         """List the latest releases with tag, name, age and status."""
+        now = clock()
+        cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
         release_list = fetch_or_exit(gh.list_releases, repo, limit=limit, runner=runner)
+        # gh release list can't filter by date. Check every item rather than stopping
+        # at the first old one: gh sorts by creation date, but released_at prefers
+        # publishedAt, so the list isn't strictly ordered by it.
+        release_list = [r for r in release_list if is_at_or_after(r.released_at, cutoff)]
         render_report(
             release_list,
-            clock(),
+            now,
             as_json=as_json,
-            title=repo_title(repo, "latest releases"),
+            title=repo_title(repo, "latest releases", since),
             noun="releases",
             to_dicts=releases_as_dicts,
             to_table=releases_table,

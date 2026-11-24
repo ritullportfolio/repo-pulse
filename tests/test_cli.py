@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+import pytest
 from typer.testing import CliRunner
 
 from repo_pulse.cli import create_app
@@ -175,3 +176,89 @@ def test_releases_gh_failure_exits_1_with_clean_message(fixed_clock) -> None:
     assert result.exit_code == 1
     assert "error: gh failed: GraphQL: Could not resolve" in result.output
     assert "Traceback" not in result.output
+
+
+# --- --since -------------------------------------------------------------------
+# Fixture PRs relative to NOW: #42 is 2d old, #41 is 3h old, #40 is 45d old.
+# Fixture releases: v2.2.0 (draft, 30m), v2.2.0-rc.1 (5h), v2.1.0 (3d), v1.0.0 (~1y).
+
+
+def test_prs_since_searches_on_github_and_trims_locally(fake_gh, fixed_clock) -> None:
+    result = invoke(fake_gh, fixed_clock, "prs", "acme/widgets", "--since", "7d", "--json")
+    assert result.exit_code == 0, result.output
+    call = fake_gh.calls[0]
+    assert call[call.index("--search") + 1] == "created:>=2026-01-08"
+    # FakeGh ignores --search, so the 45-day-old PR proves our own filter runs too.
+    assert [pr["number"] for pr in json.loads(result.output)] == [42, 41]
+
+
+def test_prs_since_finer_than_a_day_is_exact(fake_gh, fixed_clock) -> None:
+    result = invoke(fake_gh, fixed_clock, "prs", "acme/widgets", "--since", "12h", "--json")
+    assert result.exit_code == 0, result.output
+    call = fake_gh.calls[0]
+    assert call[call.index("--search") + 1] == "created:>=2026-01-15"
+    assert [pr["number"] for pr in json.loads(result.output)] == [41]
+
+
+def test_releases_since_drops_older_releases(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(
+        fake_gh_releases, fixed_clock, "releases", "acme/widgets", "--since", "2026-01-13", "--json"
+    )
+    assert result.exit_code == 0, result.output
+    assert [r["tag"] for r in json.loads(result.output)] == ["v2.2.0", "v2.2.0-rc.1"]
+    assert "--search" not in fake_gh_releases.calls[0]
+
+
+def test_prs_since_with_offset_searches_from_the_utc_date(fake_gh, fixed_clock) -> None:
+    # 05:00 at UTC+05:30 on the 15th is 23:30 UTC on the 14th.
+    result = invoke(
+        fake_gh, fixed_clock, "prs", "acme/widgets", "--since", "2026-01-15T05:00+05:30", "--json"
+    )
+    assert result.exit_code == 0, result.output
+    call = fake_gh.calls[0]
+    assert call[call.index("--search") + 1] == "created:>=2026-01-14"
+    # #42 (2026-01-13T12:00Z) is before the cutoff; only #41 (2026-01-15T09:00Z) is after.
+    assert [pr["number"] for pr in json.loads(result.output)] == [41]
+
+
+def _release(tag: str, created: str, published: str) -> dict:
+    return {
+        "tagName": tag, "name": tag, "createdAt": created, "publishedAt": published,
+        "isLatest": False, "isPrerelease": False, "isDraft": False,
+    }
+
+
+def test_releases_since_checks_every_release_not_just_up_to_the_first_old_one(fixed_clock) -> None:
+    # gh orders by creation date, so a release created long ago but published
+    # recently can come after an old one. It must still be kept.
+    fake = FakeGh(stdout=json.dumps([
+        _release("v3.0.0", "2026-01-14T10:00:00Z", "2026-01-14T10:00:00Z"),  # new
+        _release("v2.0.0", "2025-06-01T10:00:00Z", "2025-06-01T10:00:00Z"),  # old
+        _release("v2.5.0", "2025-01-01T10:00:00Z", "2026-01-15T10:00:00Z"),  # old draft, published today
+    ]))
+    result = invoke(fake, fixed_clock, "releases", "acme/widgets", "--since", "7d", "--json")
+    assert result.exit_code == 0, result.output
+    assert [r["tag"] for r in json.loads(result.output)] == ["v3.0.0", "v2.5.0"]
+
+
+def test_since_title_shows_in_empty_message(fake_gh_releases, fixed_clock) -> None:
+    result = invoke(fake_gh_releases, fixed_clock, "releases", "acme/widgets", "--since", "10m")
+    assert result.exit_code == 0, result.output
+    assert "No releases found (acme/widgets: latest releases since 10m)." in result.output
+
+
+def test_since_title_shows_in_table(fake_gh, fixed_clock) -> None:
+    result = invoke(fake_gh, fixed_clock, "prs", "acme/widgets", "--since", "7d")
+    assert result.exit_code == 0, result.output
+    assert "open pull requests since 7d" in result.output
+
+
+@pytest.mark.parametrize("command", ["prs", "releases"])
+@pytest.mark.parametrize("value", ["soon", "0d", "2026-13-01", "3000y"])
+def test_invalid_since_is_a_usage_error_before_gh_runs(command, value, fixed_clock) -> None:
+    fake = FakeGh()
+    result = invoke(fake, fixed_clock, command, "acme/widgets", "--since", value)
+    assert result.exit_code == 2
+    assert "Invalid value for '--since'" in result.output
+    assert "Traceback" not in result.output
+    assert fake.calls == []

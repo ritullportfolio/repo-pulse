@@ -34,7 +34,7 @@ Request flow: `cli.py` → `reports/<name>.py` → `gh.py` → `gh` subprocess �
 
 - **`gh.py` is the only place that runs `gh`.** Everything goes through `run_gh(args, runner)`, which returns parsed JSON and converts every failure (missing binary, not logged in, non-zero exit, bad JSON) into `GhError` with a user-facing message. Commands must call `gh` via this function, never `subprocess` directly. Arguments are passed as a list (no `shell=True`).
 - **One module per report.** Each report is `src/repo_pulse/reports/<name>.py` with a `register(app, *, runner, clock)` function. `create_app` registers every module listed in `REPORTS` in `reports/__init__.py` and passes in the injected `runner` and `clock`; `app = create_app()` uses the real `gh` and `utc_now`.
-- **Shared code, not copies.** Command pieces (`RepoArg`, `JsonOpt`, `fetch_or_exit`, `repo_title`) live in `reports/_common.py`; output (`render_report`, `age_fields`, `age_cell`) lives in `render.py`.
+- **Shared code, not copies.** Command pieces (`RepoArg`, `JsonOpt`, `SinceOpt`, `since_cutoff`, `fetch_or_exit`, `repo_title`) live in `reports/_common.py`; output (`render_report`, `age_fields`, `age_cell`) lives in `render.py`.
 - Types used in a command's signature must be defined at module level, not inside `register()`: Typer resolves them against module globals.
 - **`metrics.py` never reads the system clock**; functions take `now` explicitly. Any time-based logic must accept `now` so tests stay date-independent.
 - **CLI error contract:** commands catch `GhError`, print `error: <msg>` to stderr and `raise typer.Exit(1)`. No tracebacks reach the user.

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from repo_pulse.models import PullRequest, Release
@@ -61,13 +62,20 @@ def list_prs(
     repo: str | None,
     state: str = "open",
     limit: int = 20,
+    cutoff: datetime | None = None,
     runner: Runner | None = None,
 ) -> list[PullRequest]:
-    """List pull requests. With repo=None, gh uses the current directory's repo."""
+    """List pull requests. With repo=None, gh uses the current directory's repo.
+
+    With a `cutoff`, GitHub only returns PRs created on or after that UTC *date*;
+    the search has no finer precision, so callers trim to the exact time.
+    """
     args = ["pr", "list"]
     if repo:
         args += ["--repo", repo]
     args += ["--state", state, "--limit", str(limit), "--json", ",".join(PR_FIELDS)]
+    if cutoff is not None:
+        args += ["--search", f"created:>={cutoff.astimezone(timezone.utc).date().isoformat()}"]
 
     data = run_gh(args, runner)
     if not isinstance(data, list):

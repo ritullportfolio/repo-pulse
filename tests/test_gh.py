@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from repo_pulse import gh
@@ -41,6 +43,29 @@ def test_list_prs_builds_expected_command(fake_gh: FakeGh) -> None:
         "pr", "list", "--repo", "acme/widgets",
         "--state", "merged", "--limit", "5", "--json", FIELDS,
     ]]
+
+
+def test_list_prs_cutoff_adds_created_search(fake_gh: FakeGh) -> None:
+    cutoff = datetime(2026, 1, 8, 12, 0, tzinfo=timezone.utc)
+    gh.list_prs("acme/widgets", limit=5, cutoff=cutoff, runner=fake_gh)
+    assert fake_gh.calls == [[
+        "pr", "list", "--repo", "acme/widgets",
+        "--state", "open", "--limit", "5", "--json", FIELDS,
+        "--search", "created:>=2026-01-08",
+    ]]
+
+
+def test_list_prs_cutoff_uses_the_utc_date() -> None:
+    fake = FakeGh()
+    # 02:00 on the 8th at UTC+05:30 is still the 7th in UTC.
+    cutoff = datetime(2026, 1, 8, 2, 0, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+    gh.list_prs(None, cutoff=cutoff, runner=fake)
+    assert fake.calls[0][-2:] == ["--search", "created:>=2026-01-07"]
+
+
+def test_list_prs_without_cutoff_has_no_search(fake_gh: FakeGh) -> None:
+    gh.list_prs("acme/widgets", runner=fake_gh)
+    assert "--search" not in fake_gh.calls[0]
 
 
 def test_list_prs_without_repo_omits_repo_flag(fake_gh: FakeGh) -> None:

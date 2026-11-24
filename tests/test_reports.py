@@ -14,6 +14,7 @@ from repo_pulse.cli import create_app
 from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports import REPORTS
 from repo_pulse.reports._common import fetch_or_exit, repo_title
+from repo_pulse.reports._common import since_cutoff
 from tests.conftest import NOW, FakeGh
 
 
@@ -103,3 +104,15 @@ def test_fetch_or_exit_turns_gh_error_into_exit_1(capsys) -> None:
 def test_repo_title() -> None:
     assert repo_title("acme/widgets", "latest releases") == "acme/widgets: latest releases"
     assert repo_title(None, "open pull requests") == "current repo: open pull requests"
+
+
+def test_repo_title_with_since() -> None:
+    assert repo_title("acme/widgets", "latest releases", "7d") == "acme/widgets: latest releases since 7d"
+    assert repo_title("acme/widgets", "latest releases", None) == "acme/widgets: latest releases"
+
+
+def test_since_cutoff() -> None:
+    assert since_cutoff(None, NOW) is None
+    assert since_cutoff("1d", NOW) == NOW - timedelta(days=1)
+    with pytest.raises(typer.BadParameter, match="expected a duration like 7d"):
+        since_cutoff("soon", NOW)

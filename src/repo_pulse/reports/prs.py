@@ -11,10 +11,17 @@ import typer
 from rich.table import Table
 
 from repo_pulse import gh
-from repo_pulse.metrics import Clock
+from repo_pulse.metrics import Clock, is_at_or_after
 from repo_pulse.models import PullRequest
 from repo_pulse.render import age_cell, age_fields, render_report
-from repo_pulse.reports._common import JsonOpt, RepoArg, fetch_or_exit, repo_title
+from repo_pulse.reports._common import (
+    JsonOpt,
+    RepoArg,
+    SinceOpt,
+    fetch_or_exit,
+    repo_title,
+    since_cutoff,
+)
 
 
 class PrState(str, Enum):
@@ -79,15 +86,22 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
         repo: RepoArg = None,
         state: StateOpt = PrState.open,
         limit: PrLimitOpt = 20,
+        since: SinceOpt = None,
         as_json: JsonOpt = False,
     ) -> None:
         """List recent pull requests with author, age and review status."""
-        pull_requests = fetch_or_exit(gh.list_prs, repo, state=state.value, limit=limit, runner=runner)
+        now = clock()
+        cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
+        pull_requests = fetch_or_exit(
+            gh.list_prs, repo, state=state.value, limit=limit, cutoff=cutoff, runner=runner
+        )
+        # gh's search is by date only, so trim to the exact cutoff here.
+        pull_requests = [pr for pr in pull_requests if is_at_or_after(pr.created_at, cutoff)]
         render_report(
             pull_requests,
-            clock(),
+            now,
             as_json=as_json,
-            title=repo_title(repo, f"{state.value} pull requests"),
+            title=repo_title(repo, f"{state.value} pull requests", since),
             noun="pull requests",
             to_dicts=prs_as_dicts,
             to_table=prs_table,
