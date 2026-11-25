@@ -85,4 +85,4 @@ def _parse_since(text: str, now: datetime) -> datetime:
 
 def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
     """True if `when` is at or after `cutoff`; always True with no cutoff."""
-    return cutoff is None or when >= cutoff
+    return cutoff is None or when > cutoff
