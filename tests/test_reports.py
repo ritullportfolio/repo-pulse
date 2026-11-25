@@ -8,9 +8,11 @@ import pytest
 import typer
 from rich.console import Console
 from rich.table import Table
+from typer.testing import CliRunner
 
 from repo_pulse import gh
 from repo_pulse.cli import create_app
+from repo_pulse.config import Config
 from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports import REPORTS
 from repo_pulse.reports._common import fetch_or_exit, repo_title
@@ -25,6 +27,20 @@ def registered_command_names(app: typer.Typer) -> list[str]:
 def test_create_app_registers_every_report_in_order(fake_gh, fixed_clock) -> None:
     app = create_app(runner=fake_gh, clock=fixed_clock)
     assert registered_command_names(app) == ["prs", "releases"]
+
+
+def test_every_report_uses_default_repo_from_config(fixed_clock) -> None:
+    # Guards new reports: a command that forgets resolve_repo(ctx, repo) would
+    # silently query the current directory's repo instead of the configured one.
+    fake = FakeGh()
+    config = Config(default_repo="acme/widgets")
+    app = create_app(runner=fake, clock=fixed_clock, config_override=config)
+    for name in registered_command_names(app):
+        fake.calls.clear()
+        result = CliRunner().invoke(app, [name])
+        assert result.exit_code == 0, f"{name}: {result.output}"
+        call = fake.calls[0]
+        assert call[call.index("--repo") + 1] == "acme/widgets", name
 
 
 def test_every_report_module_has_register() -> None:

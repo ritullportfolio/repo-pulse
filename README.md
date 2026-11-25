@@ -21,7 +21,14 @@ default_repo = "cli/cli"
 
 The repo comes from, highest priority first: the `OWNER/REPO` argument, `default_repo` from the config file, then the current directory's repo.
 
-The file is looked up at `--config PATH`, then the `REPO_PULSE_CONFIG` environment variable, then `$XDG_CONFIG_HOME/repo-pulse/config.toml`, then `~/.config/repo-pulse/config.toml`. A missing file is fine. A file with invalid TOML (or a `default_repo` that isn't `OWNER/REPO`) prints `error: ...` and exits 1; it is only read when no `OWNER/REPO` argument is given.
+The file is looked up at `--config PATH`, then the `REPO_PULSE_CONFIG` environment variable, then `$XDG_CONFIG_HOME/repo-pulse/config.toml`, then `~/.config/repo-pulse/config.toml`. A missing file is fine. A file with invalid TOML (or a `default_repo` that isn't `OWNER/REPO`, or a path that can't be read) prints `error: ...` and exits 1; it is only read when no `OWNER/REPO` argument is given.
+
+`--config` belongs to `repo-pulse` itself, so it goes before the report name:
+
+```sh
+.venv/bin/repo-pulse --config ~/work/repo-pulse.toml prs    # works
+.venv/bin/repo-pulse prs --config ~/work/repo-pulse.toml    # fails: No such option: --config
+```
 
 ## Reports
 

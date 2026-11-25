@@ -30,19 +30,21 @@ No linter or formatter is configured yet.
 
 ## Architecture
 
-Request flow: `cli.py` → `reports/<name>.py` → `gh.py` → `gh` subprocess → `models.py` → `metrics.py` / `render.py`. Mermaid diagrams of this live in `docs/architecture.md`. Keep the `prs` and `releases` sequence diagrams in sync if function or field names change.
+Request flow: `cli.py` → `reports/<name>.py` (repo resolved via `config.py`) → `gh.py` → `gh` subprocess → `models.py` → `metrics.py` / `render.py`. Mermaid diagrams of this live in `docs/architecture.md`. Keep the `prs` and `releases` sequence diagrams in sync if function or field names change.
 
 - **`gh.py` is the only place that runs `gh`.** Everything goes through `run_gh(args, runner)`, which returns parsed JSON and converts every failure (missing binary, not logged in, non-zero exit, bad JSON) into `GhError` with a user-facing message. Commands must call `gh` via this function, never `subprocess` directly. Arguments are passed as a list (no `shell=True`).
 - **One module per report.** Each report is `src/repo_pulse/reports/<name>.py` with a `register(app, *, runner, clock)` function. `create_app` registers every module listed in `REPORTS` in `reports/__init__.py` and passes in the injected `runner` and `clock`; `app = create_app()` uses the real `gh` and `utc_now`.
-- **Shared code, not copies.** Command pieces (`RepoArg`, `JsonOpt`, `SinceOpt`, `since_cutoff`, `fetch_or_exit`, `repo_title`) live in `reports/_common.py`; output (`render_report`, `age_fields`, `age_cell`) lives in `render.py`.
+- **Repo resolution.** Every command takes `ctx: typer.Context` and starts with `repo = resolve_repo(ctx, repo)`. Priority: the `OWNER/REPO` argument, then `default_repo` from the TOML config (`config.py`), then `None` (gh uses the current directory's repo). The root callback stores an `AppState` on the context; the config file is only read when no argument was given. `create_app(config_override=...)` injects a `Config` and skips the file.
+- **Shared code, not copies.** Command pieces (`RepoArg`, `JsonOpt`, `SinceOpt`, `AppState`, `resolve_repo`, `since_cutoff`, `fetch_or_exit`, `repo_title`) live in `reports/_common.py`; output (`render_report`, `age_fields`, `age_cell`) lives in `render.py`.
 - Types used in a command's signature must be defined at module level, not inside `register()`: Typer resolves them against module globals.
 - **`metrics.py` never reads the system clock**; functions take `now` explicitly. Any time-based logic must accept `now` so tests stay date-independent.
-- **CLI error contract:** commands catch `GhError`, print `error: <msg>` to stderr and `raise typer.Exit(1)`. No tracebacks reach the user.
+- **CLI error contract:** commands catch `GhError` (and `resolve_repo` catches `ConfigError`), print `error: <msg>` to stderr and `raise typer.Exit(1)`. No tracebacks reach the user.
 - `--json` output is printed with plain `print`, not `rich`, so it stays machine-readable. Tables use `rich`.
 - The `@app.callback()` in `create_app` exists to force subcommand mode; without it Typer would collapse a single-command app and `repo-pulse prs` would stop working.
 
 ## Tests
 
 - Tests never hit the network. `tests/conftest.py` provides `FakeGh` (records `calls`, returns canned stdout/stderr/returncode, or raises), the `fake_gh` fixture (loaded from `tests/fixtures/pr_list.json`), and `fixed_clock` pinned to `NOW = 2026-01-15T12:00Z`.
-- CLI tests invoke `create_app(runner=fake, clock=clock)` through `typer.testing.CliRunner` and assert on `result.output` (which includes stderr).
+- CLI tests invoke `create_app(runner=fake, clock=clock)` through `typer.testing.CliRunner` and assert on `result.output` (which includes stderr). To test config behavior, pass `config_override=Config(...)` or write a file under `tmp_path` and pass `--config`.
+- An autouse fixture in `conftest.py` points `XDG_CONFIG_HOME` at a temp dir and clears `REPO_PULSE_CONFIG`, so no test ever reads the developer's real config. Don't remove it.
 - Fixture JSON mirrors real `gh --json` output, including edge cases: `author: null` (deleted user → `"ghost"`) and `reviewDecision: ""` (→ `None`).

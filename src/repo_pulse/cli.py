@@ -30,9 +30,14 @@ def _print_version(value: bool) -> None:
 def create_app(
     runner: gh.Runner | None = None,
     clock: Clock = utc_now,
-    config: Config | None = None,
+    config_override: Config | None = None,
 ) -> typer.Typer:
-    """`config` is injected by tests; when None, the config file is read lazily."""
+    """Build the app. Tests inject `runner`, `clock` and `config_override`.
+
+    `config_override` replaces the config file entirely: when it is given, `--config`
+    and the file lookup are ignored. When None, the file is read lazily, and only by
+    a command that wasn't given an OWNER/REPO argument.
+    """
     app = typer.Typer(
         help="Quick health reports for GitHub repositories, powered by the gh CLI.",
         no_args_is_help=True,
@@ -47,10 +52,12 @@ def create_app(
             typer.Option(
                 "--config",
                 envvar="REPO_PULSE_CONFIG",
-                dir_okay=False,
+                # No dir_okay=False: a bad path is reported by load_config as
+                # `error: ...` / exit 1, and only if a command actually needs it.
                 help=(
-                    "Config file (TOML). Default: $XDG_CONFIG_HOME/repo-pulse/config.toml "
-                    "or ~/.config/repo-pulse/config.toml."
+                    "Config file (TOML). Goes before the command: repo-pulse --config PATH prs. "
+                    "Default: $XDG_CONFIG_HOME/repo-pulse/config.toml or "
+                    "~/.config/repo-pulse/config.toml."
                 ),
                 show_default=False,
             ),
@@ -66,10 +73,10 @@ def create_app(
         ] = False,
     ) -> None:
         """Quick health reports for GitHub repositories, powered by the gh CLI."""
-        ctx.obj = AppState(
-            config=config,
-            config_path=config_file or (None if config is not None else default_config_path()),
-        )
+        if config_override is not None:
+            ctx.obj = AppState(config=config_override)
+        else:
+            ctx.obj = AppState(config_path=config_file or default_config_path())
 
     for report in REPORTS:
         report.register(app, runner=runner, clock=clock)
