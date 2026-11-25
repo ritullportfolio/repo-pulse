@@ -32,6 +32,17 @@ class FakeGh:
         )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Never let a test see the developer's own repo-pulse config.
+
+    Without this, a real ~/.config/repo-pulse/config.toml (or $XDG_CONFIG_HOME or
+    $REPO_PULSE_CONFIG) would change which repo the CLI tests ask gh for.
+    """
+    monkeypatch.delenv("REPO_PULSE_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+
+
 @pytest.fixture
 def pr_list_json() -> str:
     return (FIXTURES / "pr_list.json").read_text()

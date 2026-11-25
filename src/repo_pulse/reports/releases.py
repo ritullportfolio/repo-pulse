@@ -19,6 +19,7 @@ from repo_pulse.reports._common import (
     SinceOpt,
     fetch_or_exit,
     repo_title,
+    resolve_repo,
     since_cutoff,
 )
 
@@ -71,12 +72,14 @@ def releases_table(releases: Sequence[Release], now: datetime, title: str) -> Ta
 def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> None:
     @app.command()
     def releases(
+        ctx: typer.Context,
         repo: RepoArg = None,
         limit: ReleaseLimitOpt = 10,
         since: SinceOpt = None,
         as_json: JsonOpt = False,
     ) -> None:
         """List the latest releases with tag, name, age and status."""
+        repo = resolve_repo(ctx, repo)
         now = clock()
         cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
         release_list = fetch_or_exit(gh.list_releases, repo, limit=limit, runner=runner)
