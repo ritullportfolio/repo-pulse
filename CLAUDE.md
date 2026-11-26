@@ -47,4 +47,6 @@ Request flow: `cli.py` → `reports/<name>.py` (repo resolved via `config.py`) �
 - Tests never hit the network. `tests/conftest.py` provides `FakeGh` (records `calls`, returns canned stdout/stderr/returncode, or raises), the `fake_gh` fixture (loaded from `tests/fixtures/pr_list.json`), and `fixed_clock` pinned to `NOW = 2026-01-15T12:00Z`.
 - CLI tests invoke `create_app(runner=fake, clock=clock)` through `typer.testing.CliRunner` and assert on `result.output` (which includes stderr). To test config behavior, pass `config_override=Config(...)` or write a file under `tmp_path` and pass `--config`.
 - An autouse fixture in `conftest.py` points `XDG_CONFIG_HOME` at a temp dir and clears `REPO_PULSE_CONFIG`, so no test ever reads the developer's real config. Don't remove it.
+- A second autouse fixture, `_plain_output`, clears colour env vars (`GITHUB_ACTIONS`, `FORCE_COLOR`, …) and patches `typer.rich_utils.FORCE_TERMINAL`, which Typer sets at import time. Without it, output assertions fail in GitHub Actions because of ANSI codes. Don't remove it either.
+- `.github/workflows/tests.yml` runs `.venv/bin/pytest -q` on every PR (Python 3.11 and 3.13).
 - Fixture JSON mirrors real `gh --json` output, including edge cases: `author: null` (deleted user → `"ghost"`) and `reviewDecision: ""` (→ `None`).

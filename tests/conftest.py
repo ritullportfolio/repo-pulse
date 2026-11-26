@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import typer.rich_utils
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -41,6 +42,23 @@ def _isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """
     monkeypatch.delenv("REPO_PULSE_CONFIG", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+
+
+# Env vars that make Typer/rich emit ANSI colour codes even when output isn't a TTY.
+_COLOUR_ENV = ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS", "TTY_COMPATIBLE", "TTY_INTERACTIVE")
+
+
+@pytest.fixture(autouse=True)
+def _plain_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CLI output free of ANSI colour codes, so string assertions work in CI.
+
+    GitHub Actions sets GITHUB_ACTIONS=true. Typer reads that once at import time into
+    typer.rich_utils.FORCE_TERMINAL and colours its usage errors, so unsetting the
+    env var alone is too late: patch the constant too.
+    """
+    for name in _COLOUR_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(typer.rich_utils, "FORCE_TERMINAL", False)
 
 
 @pytest.fixture
