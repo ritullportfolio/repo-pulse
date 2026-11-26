@@ -1,0 +1,28 @@
+name: Tests
+
+# Runs on every PR event (opened, synchronize, reopened), so each push re-tests,
+# and on main after every merge.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only token; this workflow needs no secrets, so fork PRs are safe too.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]   # oldest supported (requires-python >=3.11) and current
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m venv .venv && .venv/bin/pip install -e '.[dev]'
+      - run: .venv/bin/pytest -q
