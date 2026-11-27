@@ -49,3 +49,4 @@ Every report takes an optional `OWNER/REPO` (defaults to the config file's `defa
 
 - `prs` asks GitHub for PRs created on or after the cutoff's date, then trims to the exact time. Unless the cutoff is exactly midnight UTC (a plain date like `2026-10-01`), `--limit N` can return fewer than N PRs. Even `7d` counts back from the current time, not from midnight.
 - `releases` filters the `--limit` latest releases, so raise `--limit` to look further back.
+- `summary` applies `--since` to open PRs and to newer pre-releases/drafts, but always shows the latest release, however old it is.

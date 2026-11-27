@@ -90,8 +90,16 @@ def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
     return cutoff is None or when >= cutoff
 
 
-def summarize(open_prs: Sequence[PullRequest], releases: Sequence[Release]) -> RepoSummary:
+def summarize(
+    open_prs: Sequence[PullRequest],
+    releases: Sequence[Release],
+    cutoff: datetime | None = None,
+) -> RepoSummary:
     """Combine open PRs and recent releases into a RepoSummary.
+
+    `releases` must be unfiltered: the latest release is reported however old it
+    is, because "what's the current release" doesn't depend on --since. `cutoff`
+    only limits which newer pre-releases/drafts count. Callers trim `open_prs`.
 
     Takes no `now`: it only counts and compares timestamps. Ages are computed at
     render time from the PR and release it picks.
@@ -101,6 +109,7 @@ def summarize(open_prs: Sequence[PullRequest], releases: Sequence[Release]) -> R
         r for r in releases
         if (r.is_draft or r.is_prerelease)
         and (latest is None or r.released_at > latest.released_at)
+        and is_at_or_after(r.released_at, cutoff)
     ]
     return RepoSummary(
         open_prs=len(open_prs),

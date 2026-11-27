@@ -202,9 +202,9 @@ sequenceDiagram
     GH-->>Report: list[Release]
 
     opt since given
-        Report->>Metrics: is_at_or_after(created_at / released_at, cutoff)
+        Report->>Metrics: is_at_or_after(created_at, cutoff) for each PR
     end
-    Report->>Metrics: summarize(open_prs, releases)
+    Report->>Metrics: summarize(open_prs, releases, cutoff)<br/>(latest release ignores cutoff; newer pre-releases/drafts use it)
     Metrics->>Models: RepoSummary(open_prs, prs_needing_review,<br/>oldest_open_pr, latest_release, newer_unreleased)
     Metrics-->>Report: RepoSummary
     alt --json

@@ -126,10 +126,11 @@ def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> Non
         limit_reached = len(open_prs) >= limit
         releases = fetch_or_exit(gh.list_releases, repo, limit=RELEASE_LIMIT, runner=runner)
 
-        # Same trimming as the prs and releases reports.
+        # Trim PRs like the prs report. Releases stay unfiltered: summarize reports
+        # the latest release regardless of --since and applies the cutoff only to
+        # newer pre-releases/drafts.
         open_prs = [pr for pr in open_prs if is_at_or_after(pr.created_at, cutoff)]
-        releases = [r for r in releases if is_at_or_after(r.released_at, cutoff)]
-        result = summarize(open_prs, releases)
+        result = summarize(open_prs, releases, cutoff)
 
         if as_json:
             # Plain print, one object (not a list), so it stays machine-readable.

@@ -73,6 +73,34 @@ def test_summarize_no_newer_unreleased_when_latest_is_newest() -> None:
     assert summarize([], releases).newer_unreleased is None
 
 
+def test_summarize_latest_release_ignores_cutoff() -> None:
+    releases = [_release("v2", 24 * 400, latest=True)]  # over a year old
+    result = summarize([], releases, cutoff=NOW - timedelta(days=7))
+    assert result.latest_release.tag == "v2"
+
+
+def test_summarize_cutoff_still_limits_newer_prereleases() -> None:
+    releases = [
+        _release("v3-rc2", 2, pre=True),
+        _release("v3-rc1", 24 * 10, pre=True),  # newer than v2, but before the cutoff
+        _release("v2", 24 * 30, latest=True),
+    ]
+    week = NOW - timedelta(days=7)
+    assert summarize([], releases, cutoff=week).newer_unreleased.tag == "v3-rc2"
+    assert summarize([], releases[1:], cutoff=week).newer_unreleased is None
+    assert summarize([], releases[1:]).newer_unreleased.tag == "v3-rc1"
+
+
+def test_summary_since_keeps_a_year_old_latest_release(fixed_clock) -> None:
+    old = [{"tagName": "v1.0.0", "name": "", "createdAt": "2025-01-01T10:00:00Z",
+            "publishedAt": "2025-01-01T12:00:00Z", "isLatest": True,
+            "isPrerelease": False, "isDraft": False}]
+    fake = routed(releases=json.dumps(old))
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--since", "7d")
+    assert result.exit_code == 0, result.output
+    assert "v1.0.0 (1y)" in result.output
+
+
 def test_summarize_without_a_latest_release_reports_any_prerelease() -> None:
     result = summarize([], [_release("v1-rc1", 3, pre=True), _release("v1-beta", 9, pre=True)])
     assert result.latest_release is None
@@ -219,7 +247,7 @@ def test_summary_gh_not_installed(fixed_clock) -> None:
     assert "error: the gh CLI was not found" in result.output
 
 
-def test_summary_since_filters_prs_and_releases(fake_gh_summary, fixed_clock) -> None:
+def test_summary_since_filters_prs_but_not_the_latest_release(fake_gh_summary, fixed_clock) -> None:
     result = invoke(fake_gh_summary, fixed_clock, "summary", "acme/widgets", "--since", "1d",
                     "--json")
     assert result.exit_code == 0, result.output
@@ -228,7 +256,9 @@ def test_summary_since_filters_prs_and_releases(fake_gh_summary, fixed_clock) ->
     data = json.loads(result.output)
     assert data["open_prs"] == 1  # only #41 (3h old)
     assert data["oldest_open_pr"]["number"] == 41
-    assert data["latest_release"] is None  # v2.1.0 is 3d old
+    # v2.1.0 is 3d old, outside the 1d window, but is still the current release.
+    assert data["latest_release"]["tag"] == "v2.1.0"
+    assert data["latest_release"]["age"] == "3d"
     assert data["newer_unreleased"]["tag"] == "v2.2.0"
 
 
