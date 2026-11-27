@@ -4,8 +4,10 @@ callers pass `now` in explicitly."""
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta, timezone
+
+from repo_pulse.models import PullRequest, Release, RepoSummary
 
 Clock = Callable[[], datetime]
 
@@ -86,3 +88,24 @@ def _parse_since(text: str, now: datetime) -> datetime:
 def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
     """True if `when` is at or after `cutoff`; always True with no cutoff."""
     return cutoff is None or when >= cutoff
+
+
+def summarize(open_prs: Sequence[PullRequest], releases: Sequence[Release]) -> RepoSummary:
+    """Combine open PRs and recent releases into a RepoSummary.
+
+    Takes no `now`: it only counts and compares timestamps. Ages are computed at
+    render time from the PR and release it picks.
+    """
+    latest = next((r for r in releases if r.is_latest), None)
+    unreleased = [
+        r for r in releases
+        if (r.is_draft or r.is_prerelease)
+        and (latest is None or r.released_at > latest.released_at)
+    ]
+    return RepoSummary(
+        open_prs=len(open_prs),
+        prs_needing_review=sum(pr.review_decision == "REVIEW_REQUIRED" for pr in open_prs),
+        oldest_open_pr=min(open_prs, key=lambda pr: pr.created_at, default=None),
+        latest_release=latest,
+        newer_unreleased=max(unreleased, key=lambda r: r.released_at, default=None),
+    )

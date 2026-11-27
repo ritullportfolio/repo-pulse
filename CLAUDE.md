@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`repo-pulse` is a Python (>=3.11) CLI built with Typer that reports on GitHub repositories. All GitHub data comes from shelling out to the `gh` CLI; there is no direct API client and no token handling. The `prs` and `releases` commands exist so far. `summary`, `issues` and `activity` are planned (see `docs/architecture.md`).
+`repo-pulse` is a Python (>=3.11) CLI built with Typer that reports on GitHub repositories. All GitHub data comes from shelling out to the `gh` CLI; there is no direct API client and no token handling. The `prs`, `releases` and `summary` commands exist so far. `issues` and `activity` are planned (see `docs/architecture.md`).
 
 ## Commands
 

@@ -26,7 +26,7 @@ def registered_command_names(app: typer.Typer) -> list[str]:
 
 def test_create_app_registers_every_report_in_order(fake_gh, fixed_clock) -> None:
     app = create_app(runner=fake_gh, clock=fixed_clock)
-    assert registered_command_names(app) == ["prs", "releases"]
+    assert registered_command_names(app) == ["prs", "releases", "summary"]
 
 
 def test_every_report_uses_default_repo_from_config(fixed_clock) -> None:

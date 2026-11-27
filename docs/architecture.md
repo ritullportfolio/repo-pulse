@@ -8,12 +8,12 @@ repo-pulse is a Python command-line tool, built with Typer, that reports on GitH
 |---|---|
 | `config.py` | Optional TOML config (`default_repo`): `load_config`, `default_config_path`. `reports/_common.py:resolve_repo` applies it when no repo argument is given. |
 | `cli.py` | Typer app: `--version`, `--config`, the subcommand callback, and a loop that registers every module in `REPORTS`. No report code. |
-| `reports/<name>.py` | One module per report (`prs.py`, `releases.py`). Each has a `register(app, *, runner, clock)` that defines its command, plus that report's JSON rows and table columns. |
-| `reports/__init__.py` | `REPORTS = [prs, releases]`: the list of report modules, in `--help` order. |
+| `reports/<name>.py` | One module per report (`prs.py`, `releases.py`, `summary.py`). Each has a `register(app, *, runner, clock)` that defines its command, plus that report's JSON rows and table columns. |
+| `reports/__init__.py` | `REPORTS = [prs, releases, summary]`: the list of report modules, in `--help` order. |
 | `reports/_common.py` | Shared command pieces: `RepoArg`, `JsonOpt`, `SinceOpt`, `since_cutoff` (bad `--since` → usage error, exit 2), `fetch_or_exit` (the `GhError` → `error:` / exit 1 contract), `repo_title`. |
 | `gh.py` | The only module that runs `gh`. Builds argument lists, runs the subprocess, parses JSON, and turns failures into `GhError`. |
 | `models.py` | Dataclasses: `RepoSummary`, `PullRequest`, `Release`, `Issue`, `Activity`. |
-| `metrics.py` | Pure functions: ages, `--since` parsing (`parse_since`, `is_at_or_after`), counts, activity rollups. No I/O. |
+| `metrics.py` | Pure functions: ages, `--since` parsing (`parse_since`, `is_at_or_after`), counts (`summarize` → `RepoSummary`), activity rollups. No I/O. |
 | `render.py` | Shared output for every report: `render_report` (JSON / "No … found" / `rich` table), `age_fields`, `age_cell`. |
 
 ## Flowchart
@@ -166,4 +166,52 @@ sequenceDiagram
         GH-->>Report: raise GhError(message)
         Report-->>User: fetch_or_exit: one-line error on stderr, exit code 1
     end
+```
+
+## Sequence: `repo-pulse summary owner/repo`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as cli.py (Typer)
+    participant Report as reports/summary.py
+    participant GH as gh.py
+    participant Proc as gh CLI (subprocess)
+    participant Models as models.py
+    participant Metrics as metrics.py
+
+    User->>CLI: repo-pulse summary owner/repo
+    CLI->>CLI: parse args (limit=100, since=None, json=False)
+    CLI->>Report: summary(...) (registered from REPORTS)
+    Report->>Report: repo = resolve_repo(ctx, repo)<br/>(argument, else config default_repo, else current dir)
+    Report->>Report: now = clock()
+    opt --since given
+        Report->>Metrics: parse_since(since, now)<br/>via since_cutoff (reports/_common.py)
+        Metrics-->>Report: cutoff datetime (bad value → usage error, exit 2, gh never runs)
+    end
+    Report->>GH: list_prs("owner/repo", state="open", limit=100, cutoff=cutoff)<br/>via fetch_or_exit
+    GH->>Proc: gh pr list --repo owner/repo --state open --limit 100<br/>--json number,title,author,createdAt,reviewDecision,url<br/>(+ --search "created:>=YYYY-MM-DD" with --since)
+    Proc-->>GH: stdout: JSON array
+    GH->>Models: PullRequest.from_gh(item) for each item
+    GH-->>Report: list[PullRequest] (limit_reached = len >= limit)
+    Report->>GH: list_releases("owner/repo", limit=RELEASE_LIMIT=20)<br/>via fetch_or_exit
+    GH->>Proc: gh release list --repo owner/repo --limit 20<br/>--json tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft
+    Proc-->>GH: stdout: JSON array
+    GH->>Models: Release.from_gh(item) for each item
+    GH-->>Report: list[Release]
+
+    opt since given
+        Report->>Metrics: is_at_or_after(created_at / released_at, cutoff)
+    end
+    Report->>Metrics: summarize(open_prs, releases)
+    Metrics->>Models: RepoSummary(open_prs, prs_needing_review,<br/>oldest_open_pr, latest_release, newer_unreleased)
+    Metrics-->>Report: RepoSummary
+    alt --json
+        Report-->>User: summary_as_dict(...) as one JSON object (plain print)
+    else default
+        Report-->>User: summary_table(...): rich key/value table
+    end
+
+    Note over Report,GH: Either gh call failing → GhError → fetch_or_exit:<br/>`error: <msg>` on stderr, exit 1, no partial summary.<br/>A failed pr list means release list never runs.
 ```
