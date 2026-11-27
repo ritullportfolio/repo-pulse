@@ -1,0 +1,163 @@
+"""`repo-pulse summary`: one health overview built from the prs and releases data."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Annotated, Any
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from repo_pulse import gh
+from repo_pulse.metrics import Clock, is_at_or_after, summarize
+from repo_pulse.models import PullRequest, Release, RepoSummary
+from repo_pulse.render import age_cell, age_fields
+from repo_pulse.reports._common import (
+    JsonOpt,
+    RepoArg,
+    SinceOpt,
+    fetch_or_exit,
+    repo_title,
+    resolve_repo,
+    since_cutoff,
+)
+from repo_pulse.reports.releases import release_status
+
+SummaryLimitOpt = Annotated[
+    int,
+    typer.Option(
+        min=1,
+        help="Maximum number of open PRs to count. Past it, counts show as N+.",
+    ),
+]
+
+# Only used to find pre-releases/drafts newer than the latest release (which is
+# fetched directly), so a long run of nightlies just shows the newest one.
+RELEASE_LIMIT = 20
+
+
+def _pr_dict(pr: PullRequest | None, now: datetime) -> dict[str, Any] | None:
+    if pr is None:
+        return None
+    return {
+        "number": pr.number,
+        "title": pr.title,
+        "author": pr.author,
+        "created_at": pr.created_at.isoformat(),
+        **age_fields(pr.created_at, now),
+        "url": pr.url,
+    }
+
+
+def _release_dict(release: Release | None, now: datetime) -> dict[str, Any] | None:
+    if release is None:
+        return None
+    return {
+        "tag": release.tag,
+        "name": release.name,
+        "status": release_status(release),
+        "published_at": release.published_at.isoformat() if release.published_at else None,
+        "created_at": release.created_at.isoformat(),
+        **age_fields(release.released_at, now),
+    }
+
+
+def summary_as_dict(summary: RepoSummary, now: datetime, *, limit_reached: bool) -> dict:
+    return {
+        "open_prs": summary.open_prs,
+        "open_prs_limit_reached": limit_reached,
+        "prs_needing_review": summary.prs_needing_review,
+        "oldest_open_pr": _pr_dict(summary.oldest_open_pr, now),
+        "latest_release": _release_dict(summary.latest_release, now),
+        "newer_unreleased": _release_dict(summary.newer_unreleased, now),
+    }
+
+
+def summary_table(summary: RepoSummary, now: datetime, title: str, *, limit_reached: bool) -> Table:
+    table = Table(title=title, show_header=False)
+    table.add_column("Metric", style="cyan", no_wrap=True)
+    table.add_column("Value")
+
+    plus = "+" if limit_reached else ""
+    table.add_row("Open PRs", f"{summary.open_prs}{plus}")
+    table.add_row("Needing review", f"{summary.prs_needing_review}{plus}")
+
+    pr = summary.oldest_open_pr
+    table.add_row(
+        "Oldest open PR",
+        f"#{pr.number} {pr.title} ({age_cell(pr.created_at, now)})" if pr else "-",
+    )
+
+    latest = summary.latest_release
+    table.add_row(
+        "Latest release",
+        f"{latest.tag} ({age_cell(latest.released_at, now)})" if latest else "-",
+    )
+
+    newer = summary.newer_unreleased
+    table.add_row(
+        "Newer pre-release/draft",
+        f"{newer.tag} {release_status(newer)} ({age_cell(newer.released_at, now)})"
+        if newer
+        else "-",
+    )
+    return table
+
+
+def fetch_open_prs(
+    repo: str | None, limit: int, cutoff: datetime | None, runner: gh.Runner | None
+) -> tuple[list[PullRequest], bool, PullRequest | None]:
+    """Up to `limit` open PRs since `cutoff`, newest first, plus whether there were more,
+    plus the oldest open PR when the list was cut short (else None: it's in the list).
+
+    Fetches limit + 1 to tell "exactly limit" from "more". gh's search is by date, so
+    PRs are trimmed to the exact cutoff here. Since the list is newest first, if
+    trimming dropped anything, every PR after the cutoff was already fetched.
+    """
+    fetched = fetch_or_exit(
+        gh.list_prs, repo, state="open", limit=limit + 1, cutoff=cutoff, runner=runner
+    )
+    open_prs = [pr for pr in fetched if is_at_or_after(pr.created_at, cutoff)]
+    if len(open_prs) < len(fetched) or len(open_prs) <= limit:
+        return open_prs, False, None
+
+    # Truncated: the oldest open PR isn't in a newest-first list. Look it up oldest
+    # first. With a cutoff the first results can predate it by up to a day, so take
+    # `limit` of them and skip those.
+    candidates = fetch_or_exit(
+        gh.list_prs, repo, state="open", limit=1 if cutoff is None else limit,
+        cutoff=cutoff, runner=runner, oldest_first=True,
+    )
+    oldest = next((pr for pr in candidates if is_at_or_after(pr.created_at, cutoff)), None)
+    # If all `limit` candidates predate the cutoff, fall back to the oldest seen.
+    return open_prs[:limit], True, oldest or min(open_prs, key=lambda pr: pr.created_at)
+
+
+def register(app: typer.Typer, *, runner: gh.Runner | None, clock: Clock) -> None:
+    @app.command()
+    def summary(
+        ctx: typer.Context,
+        repo: RepoArg = None,
+        limit: SummaryLimitOpt = 100,
+        since: SinceOpt = None,
+        as_json: JsonOpt = False,
+    ) -> None:
+        """Health overview: open PRs, review backlog and the latest release."""
+        repo = resolve_repo(ctx, repo)
+        now = clock()
+        cutoff = since_cutoff(since, now)  # a bad value exits 2 before gh runs
+        # Any gh failure exits 1 with the usual error, rather than a partial summary.
+        # pr list goes first: it reports a missing repo, which release view can't.
+        open_prs, limit_reached, oldest = fetch_open_prs(repo, limit, cutoff, runner)
+        latest = fetch_or_exit(gh.latest_release, repo, runner=runner)
+        releases = fetch_or_exit(gh.list_releases, repo, limit=RELEASE_LIMIT, runner=runner)
+        result = summarize(open_prs, latest, releases, cutoff, oldest_open_pr=oldest)
+
+        if as_json:
+            # Plain print, one object (not a list), so it stays machine-readable.
+            print(json.dumps(summary_as_dict(result, now, limit_reached=limit_reached), indent=2))
+        else:
+            title = repo_title(repo, "summary", since)
+            Console().print(summary_table(result, now, title, limit_reached=limit_reached))

@@ -8,6 +8,7 @@ shells out to the real binary; tests pass a fake one.
 from __future__ import annotations
 
 import json
+import dataclasses
 import subprocess
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -21,6 +22,8 @@ PR_FIELDS = ("number", "title", "author", "createdAt", "reviewDecision", "url")
 RELEASE_FIELDS = (
     "tagName", "name", "publishedAt", "createdAt", "isLatest", "isPrerelease", "isDraft",
 )
+# `gh release view` has no isLatest field.
+RELEASE_VIEW_FIELDS = tuple(f for f in RELEASE_FIELDS if f != "isLatest")
 
 
 class GhError(Exception):
@@ -64,18 +67,25 @@ def list_prs(
     limit: int = 20,
     cutoff: datetime | None = None,
     runner: Runner | None = None,
+    oldest_first: bool = False,
 ) -> list[PullRequest]:
-    """List pull requests. With repo=None, gh uses the current directory's repo.
+    """List pull requests, newest first. With repo=None, gh uses the current directory's repo.
 
     With a `cutoff`, GitHub only returns PRs created on or after that UTC *date*;
     the search has no finer precision, so callers trim to the exact time.
+    `oldest_first` sorts by creation date ascending instead.
     """
     args = ["pr", "list"]
     if repo:
         args += ["--repo", repo]
     args += ["--state", state, "--limit", str(limit), "--json", ",".join(PR_FIELDS)]
+    search = []
     if cutoff is not None:
-        args += ["--search", f"created:>={cutoff.astimezone(timezone.utc).date().isoformat()}"]
+        search.append(f"created:>={cutoff.astimezone(timezone.utc).date().isoformat()}")
+    if oldest_first:
+        search.append("sort:created-asc")
+    if search:
+        args += ["--search", " ".join(search)]
 
     data = run_gh(args, runner)
     if not isinstance(data, list):
@@ -98,3 +108,25 @@ def list_releases(
     if not isinstance(data, list):
         raise GhError("unexpected gh output: expected a JSON list of releases")
     return [Release.from_gh(item) for item in data]
+
+
+def latest_release(repo: str | None, runner: Runner | None = None) -> Release | None:
+    """The release GitHub marks as latest, or None if the repo has no releases.
+
+    gh prints "release not found" both for a repo without releases and for a repo
+    that doesn't exist, so call this after something that would catch the latter.
+    """
+    args = ["release", "view"]
+    if repo:
+        args += ["--repo", repo]
+    args += ["--json", ",".join(RELEASE_VIEW_FIELDS)]
+
+    try:
+        data = run_gh(args, runner)
+    except GhError as exc:
+        if str(exc) == "gh failed: release not found":
+            return None
+        raise
+    if not isinstance(data, dict):
+        raise GhError("unexpected gh output: expected a JSON object for the latest release")
+    return dataclasses.replace(Release.from_gh(data), is_latest=True)

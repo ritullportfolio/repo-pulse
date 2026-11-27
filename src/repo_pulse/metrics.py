@@ -4,8 +4,10 @@ callers pass `now` in explicitly."""
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta, timezone
+
+from repo_pulse.models import PullRequest, Release, RepoSummary
 
 Clock = Callable[[], datetime]
 
@@ -86,3 +88,38 @@ def _parse_since(text: str, now: datetime) -> datetime:
 def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
     """True if `when` is at or after `cutoff`; always True with no cutoff."""
     return cutoff is None or when >= cutoff
+
+
+def summarize(
+    open_prs: Sequence[PullRequest],
+    latest_release: Release | None,
+    releases: Sequence[Release],
+    cutoff: datetime | None = None,
+    *,
+    oldest_open_pr: PullRequest | None = None,
+) -> RepoSummary:
+    """Combine open PRs and releases into a RepoSummary.
+
+    `latest_release` is reported however old it is: "what's current" doesn't depend
+    on --since. `releases` (unfiltered) supply the pre-releases/drafts newer than it;
+    `cutoff` only limits those. Callers trim `open_prs` to the cutoff. When `open_prs`
+    is truncated, pass the real `oldest_open_pr`; otherwise it's the oldest in the list.
+
+    Takes no `now`: it only counts and compares timestamps. Ages are computed at
+    render time from the PR and release it picks.
+    """
+    unreleased = [
+        r for r in releases
+        if (r.is_draft or r.is_prerelease)
+        and (latest_release is None or r.released_at > latest_release.released_at)
+        and is_at_or_after(r.released_at, cutoff)
+    ]
+    if oldest_open_pr is None:
+        oldest_open_pr = min(open_prs, key=lambda pr: pr.created_at, default=None)
+    return RepoSummary(
+        open_prs=len(open_prs),
+        prs_needing_review=sum(pr.review_decision == "REVIEW_REQUIRED" for pr in open_prs),
+        oldest_open_pr=oldest_open_pr,
+        latest_release=latest_release,
+        newer_unreleased=max(unreleased, key=lambda r: r.released_at, default=None),
+    )

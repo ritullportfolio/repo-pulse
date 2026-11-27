@@ -17,7 +17,7 @@ from repo_pulse.render import age_cell, age_fields, render_report
 from repo_pulse.reports import REPORTS
 from repo_pulse.reports._common import fetch_or_exit, repo_title
 from repo_pulse.reports._common import since_cutoff
-from tests.conftest import NOW, FakeGh
+from tests.conftest import NOW, FakeGh, RoutedFakeGh, no_release_gh
 
 
 def registered_command_names(app: typer.Typer) -> list[str]:
@@ -26,13 +26,15 @@ def registered_command_names(app: typer.Typer) -> list[str]:
 
 def test_create_app_registers_every_report_in_order(fake_gh, fixed_clock) -> None:
     app = create_app(runner=fake_gh, clock=fixed_clock)
-    assert registered_command_names(app) == ["prs", "releases"]
+    assert registered_command_names(app) == ["prs", "releases", "summary"]
 
 
 def test_every_report_uses_default_repo_from_config(fixed_clock) -> None:
     # Guards new reports: a command that forgets resolve_repo(ctx, repo) would
     # silently query the current directory's repo instead of the configured one.
-    fake = FakeGh()
+    # Every list call gets "[]". `gh release view` returns an object, not a list,
+    # so it answers as for a repo without releases.
+    fake = RoutedFakeGh({"release view": no_release_gh()}, default=FakeGh())
     config = Config(default_repo="acme/widgets")
     app = create_app(runner=fake, clock=fixed_clock, config_override=config)
     for name in registered_command_names(app):
@@ -41,6 +43,8 @@ def test_every_report_uses_default_repo_from_config(fixed_clock) -> None:
         assert result.exit_code == 0, f"{name}: {result.output}"
         call = fake.calls[0]
         assert call[call.index("--repo") + 1] == "acme/widgets", name
+        # Reports that call gh more than once must pass the repo every time.
+        assert all(c[c.index("--repo") + 1] == "acme/widgets" for c in fake.calls), name
 
 
 def test_every_report_module_has_register() -> None:

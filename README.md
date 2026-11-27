@@ -38,6 +38,7 @@ Every report takes an optional `OWNER/REPO` (defaults to the config file's `defa
 |---|---|---|
 | `repo-pulse prs [OWNER/REPO]` | Recent pull requests with author, age and review status | `--state open\|closed\|merged\|all` (default `open`), `--limit` (default 20), `--since 7d\|2026-10-01` |
 | `repo-pulse releases [OWNER/REPO]` | Latest releases with tag, name, age and status (latest / pre-release / draft) | `--limit` (default 10), `--since 7d\|2026-10-01` |
+| `repo-pulse summary [OWNER/REPO]` | Health overview: open PR count, PRs needing review, oldest open PR, latest release, and any newer pre-release or draft. `--json` prints one object | `--limit` open PRs to count (default 100; counts show `N+` only when there are more), `--since 7d\|2026-10-01` |
 
 ```sh
 .venv/bin/repo-pulse releases cli/cli --limit 5
@@ -48,3 +49,4 @@ Every report takes an optional `OWNER/REPO` (defaults to the config file's `defa
 
 - `prs` asks GitHub for PRs created on or after the cutoff's date, then trims to the exact time. Unless the cutoff is exactly midnight UTC (a plain date like `2026-10-01`), `--limit N` can return fewer than N PRs. Even `7d` counts back from the current time, not from midnight.
 - `releases` filters the `--limit` latest releases, so raise `--limit` to look further back.
+- `summary` applies `--since` to open PRs and to newer pre-releases/drafts, but always shows the latest release, however old it is.

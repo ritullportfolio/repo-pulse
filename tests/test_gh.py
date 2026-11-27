@@ -133,3 +133,59 @@ def test_default_runner_does_not_use_shell(monkeypatch: pytest.MonkeyPatch) -> N
         gh.run_gh(["pr", "list"])
     assert captured["cmd"] == ["gh", "pr", "list"]
     assert not captured["kwargs"].get("shell", False)
+
+
+# --- oldest-first PRs and the latest release (summary) -------------------------
+
+VIEW_FIELDS = "tagName,name,publishedAt,createdAt,isPrerelease,isDraft"
+
+
+def test_list_prs_oldest_first_adds_sort_search(fake_gh: FakeGh) -> None:
+    gh.list_prs("acme/widgets", limit=1, runner=fake_gh, oldest_first=True)
+    assert fake_gh.calls[0][-2:] == ["--search", "sort:created-asc"]
+
+
+def test_list_prs_oldest_first_with_cutoff_combines_one_search(fake_gh: FakeGh) -> None:
+    cutoff = datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+    gh.list_prs("acme/widgets", cutoff=cutoff, runner=fake_gh, oldest_first=True)
+    call = fake_gh.calls[0]
+    assert call.count("--search") == 1
+    assert call[-1] == "created:>=2026-01-14 sort:created-asc"
+
+
+def test_latest_release_builds_expected_command(release_view_json: str) -> None:
+    fake = FakeGh(stdout=release_view_json)
+    gh.latest_release("acme/widgets", runner=fake)
+    assert fake.calls == [["release", "view", "--repo", "acme/widgets", "--json", VIEW_FIELDS]]
+
+
+def test_latest_release_without_repo_omits_repo_flag(release_view_json: str) -> None:
+    fake = FakeGh(stdout=release_view_json)
+    gh.latest_release(None, runner=fake)
+    assert "--repo" not in fake.calls[0]
+
+
+def test_latest_release_parses_fixture_and_marks_it_latest(release_view_json: str) -> None:
+    # gh release view has no isLatest field; the release it returns is the latest.
+    release = gh.latest_release("acme/widgets", runner=FakeGh(stdout=release_view_json))
+    assert release.tag == "v2.1.0"
+    assert release.name == "Widgets 2.1.0"
+    assert release.published_at == datetime(2026, 1, 12, 12, 0, tzinfo=timezone.utc)
+    assert release.is_latest
+    assert not release.is_prerelease and not release.is_draft
+
+
+def test_latest_release_none_when_repo_has_no_releases() -> None:
+    fake = FakeGh(returncode=1, stderr="release not found\n")
+    assert gh.latest_release("acme/widgets", runner=fake) is None
+
+
+def test_latest_release_other_failures_still_raise() -> None:
+    fake = FakeGh(returncode=1, stderr="HTTP 502: Bad Gateway")
+    with pytest.raises(gh.GhError, match="HTTP 502"):
+        gh.latest_release("acme/widgets", runner=fake)
+
+
+def test_latest_release_non_object_json_raises_gh_error() -> None:
+    with pytest.raises(gh.GhError, match="expected a JSON object for the latest release"):
+        gh.latest_release("acme/widgets", runner=FakeGh(stdout="[]"))
