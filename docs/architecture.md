@@ -190,21 +190,33 @@ sequenceDiagram
         Report->>Metrics: parse_since(since, now)<br/>via since_cutoff (reports/_common.py)
         Metrics-->>Report: cutoff datetime (bad value → usage error, exit 2, gh never runs)
     end
-    Report->>GH: list_prs("owner/repo", state="open", limit=100, cutoff=cutoff)<br/>via fetch_or_exit
-    GH->>Proc: gh pr list --repo owner/repo --state open --limit 100<br/>--json number,title,author,createdAt,reviewDecision,url<br/>(+ --search "created:>=YYYY-MM-DD" with --since)
-    Proc-->>GH: stdout: JSON array
+    Report->>GH: list_prs("owner/repo", state="open", limit=101, cutoff=cutoff)<br/>via fetch_open_prs → fetch_or_exit (limit + 1 to detect "more")
+    GH->>Proc: gh pr list --repo owner/repo --state open --limit 101<br/>--json number,title,author,createdAt,reviewDecision,url<br/>(+ --search "created:>=YYYY-MM-DD" with --since)
+    Proc-->>GH: stdout: JSON array, newest first
     GH->>Models: PullRequest.from_gh(item) for each item
-    GH-->>Report: list[PullRequest] (limit_reached = len >= limit)
+    GH-->>Report: list[PullRequest]
+    Report->>Metrics: is_at_or_after(created_at, cutoff) for each PR
+    opt more than limit PRs, none trimmed (list is truncated)
+        Report->>GH: list_prs(..., limit=1 (or limit with --since), cutoff=cutoff, oldest_first=True)
+        GH->>Proc: gh pr list ... --search "[created:>=YYYY-MM-DD ]sort:created-asc"
+        Proc-->>GH: stdout: oldest open PRs first
+        GH-->>Report: oldest_open_pr = first at or after the exact cutoff
+    end
+    Report->>GH: latest_release("owner/repo")<br/>via fetch_or_exit
+    GH->>Proc: gh release view --repo owner/repo<br/>--json tagName,name,publishedAt,createdAt,isPrerelease,isDraft
+    alt repo has releases
+        Proc-->>GH: stdout: JSON object
+        GH->>Models: Release.from_gh(data), is_latest=True
+        GH-->>Report: Release
+    else "release not found" (also a missing repo, hence pr list runs first)
+        GH-->>Report: None
+    end
     Report->>GH: list_releases("owner/repo", limit=RELEASE_LIMIT=20)<br/>via fetch_or_exit
     GH->>Proc: gh release list --repo owner/repo --limit 20<br/>--json tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft
     Proc-->>GH: stdout: JSON array
-    GH->>Models: Release.from_gh(item) for each item
-    GH-->>Report: list[Release]
+    GH-->>Report: list[Release] (only for pre-releases/drafts newer than latest)
 
-    opt since given
-        Report->>Metrics: is_at_or_after(created_at, cutoff) for each PR
-    end
-    Report->>Metrics: summarize(open_prs, releases, cutoff)<br/>(latest release ignores cutoff; newer pre-releases/drafts use it)
+    Report->>Metrics: summarize(open_prs, latest, releases, cutoff, oldest_open_pr=...)<br/>(latest release ignores cutoff; newer pre-releases/drafts use it)
     Metrics->>Models: RepoSummary(open_prs, prs_needing_review,<br/>oldest_open_pr, latest_release, newer_unreleased)
     Metrics-->>Report: RepoSummary
     alt --json
@@ -213,5 +225,5 @@ sequenceDiagram
         Report-->>User: summary_table(...): rich key/value table
     end
 
-    Note over Report,GH: Either gh call failing → GhError → fetch_or_exit:<br/>`error: <msg>` on stderr, exit 1, no partial summary.<br/>A failed pr list means release list never runs.
+    Note over Report,GH: Any gh call failing (other than "release not found") → GhError →<br/>fetch_or_exit: `error: <msg>` on stderr, exit 1, no partial summary.<br/>Calls stop at the first failure.
 ```

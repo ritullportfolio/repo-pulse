@@ -75,7 +75,7 @@ class RepoSummary:
     open_prs: int
     prs_needing_review: int  # reviewDecision REVIEW_REQUIRED
     oldest_open_pr: PullRequest | None
-    latest_release: Release | None  # the release GitHub marks as latest
+    latest_release: Release | None  # the release GitHub marks as latest (gh release view)
     # The newest pre-release or draft that is newer than latest_release (or newer
     # than nothing, if there is no latest release).
     newer_unreleased: Release | None

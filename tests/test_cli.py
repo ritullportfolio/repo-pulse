@@ -253,7 +253,7 @@ def test_since_title_shows_in_table(fake_gh, fixed_clock) -> None:
     assert "open pull requests since 7d" in result.output
 
 
-@pytest.mark.parametrize("command", ["prs", "releases"])
+@pytest.mark.parametrize("command", ["prs", "releases", "summary"])
 @pytest.mark.parametrize("value", ["soon", "0d", "2026-13-01", "3000y"])
 def test_invalid_since_is_a_usage_error_before_gh_runs(command, value, fixed_clock) -> None:
     fake = FakeGh()

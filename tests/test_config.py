@@ -16,12 +16,22 @@ def invoke(fake, clock, *args: str, config: Config | None = None, env: dict | No
     return runner.invoke(app, list(args), env=env)
 
 
-TITLES = {"prs": "open pull requests", "releases": "latest releases"}
+TITLES = {"prs": "open pull requests", "releases": "latest releases", "summary": "summary"}
 
 
 def repo_flag(fake) -> str:
     call = fake.calls[0]
     return call[call.index("--repo") + 1]
+
+
+def repo_flags(fake) -> set[str]:
+    """--repo values across every gh call (summary makes several)."""
+    return {call[call.index("--repo") + 1] for call in fake.calls}
+
+
+@pytest.fixture
+def fakes(fake_gh, fake_gh_releases, fake_gh_summary) -> dict:
+    return {"prs": fake_gh, "releases": fake_gh_releases, "summary": fake_gh_summary}
 
 
 # --- load_config -----------------------------------------------------------
@@ -55,34 +65,37 @@ def test_default_path_respects_xdg(tmp_path: Path) -> None:
 # --- CLI -------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cmd", ["prs", "releases"])
-def test_no_config_file_uses_current_repo(cmd, fake_gh, fake_gh_releases, fixed_clock, tmp_path):
-    fake = fake_gh if cmd == "prs" else fake_gh_releases
+@pytest.mark.parametrize("cmd", ["prs", "releases", "summary"])
+def test_no_config_file_uses_current_repo(cmd, fakes, fixed_clock, tmp_path):
+    fake = fakes[cmd]
     result = invoke(fake, fixed_clock, "--config", str(tmp_path / "missing.toml"), cmd)
     assert result.exit_code == 0, result.output
     assert "--repo" not in fake.calls[0]
+    assert all("--repo" not in call for call in fake.calls)
     assert f"current repo: {TITLES[cmd]}" in result.output
 
 
-@pytest.mark.parametrize("cmd", ["prs", "releases"])
-def test_config_default_repo_is_used(cmd, fake_gh, fake_gh_releases, fixed_clock, tmp_path):
-    fake = fake_gh if cmd == "prs" else fake_gh_releases
+@pytest.mark.parametrize("cmd", ["prs", "releases", "summary"])
+def test_config_default_repo_is_used(cmd, fakes, fixed_clock, tmp_path):
+    fake = fakes[cmd]
     path = tmp_path / "c.toml"
     path.write_text('default_repo = "cli/cli"\n')
     result = invoke(fake, fixed_clock, "--config", str(path), cmd)
     assert result.exit_code == 0, result.output
     assert repo_flag(fake) == "cli/cli"
+    assert repo_flags(fake) == {"cli/cli"}
     assert f"cli/cli: {TITLES[cmd]}" in result.output
 
 
-@pytest.mark.parametrize("cmd", ["prs", "releases"])
-def test_cli_argument_overrides_config(cmd, fake_gh, fake_gh_releases, fixed_clock, tmp_path):
-    fake = fake_gh if cmd == "prs" else fake_gh_releases
+@pytest.mark.parametrize("cmd", ["prs", "releases", "summary"])
+def test_cli_argument_overrides_config(cmd, fakes, fixed_clock, tmp_path):
+    fake = fakes[cmd]
     path = tmp_path / "c.toml"
     path.write_text('default_repo = "cli/cli"\n')
     result = invoke(fake, fixed_clock, "--config", str(path), cmd, "acme/widgets")
     assert result.exit_code == 0, result.output
     assert repo_flag(fake) == "acme/widgets"
+    assert repo_flags(fake) == {"acme/widgets"}
 
 
 def test_injected_config(fake_gh, fixed_clock) -> None:
@@ -99,7 +112,7 @@ def test_env_var_selects_config(fake_gh, fixed_clock, tmp_path) -> None:
     assert repo_flag(fake_gh) == "cli/cli"
 
 
-@pytest.mark.parametrize("cmd", ["prs", "releases"])
+@pytest.mark.parametrize("cmd", ["prs", "releases", "summary"])
 def test_invalid_toml_is_a_clean_error(cmd, fake_gh, fixed_clock, tmp_path) -> None:
     path = tmp_path / "c.toml"
     path.write_text("default_repo = [oops\n")
@@ -110,15 +123,16 @@ def test_invalid_toml_is_a_clean_error(cmd, fake_gh, fixed_clock, tmp_path) -> N
     assert fake_gh.calls == []
 
 
-@pytest.mark.parametrize("cmd", ["prs", "releases"])
-def test_explicit_repo_ignores_a_broken_config(cmd, fake_gh, fake_gh_releases, fixed_clock, tmp_path):
+@pytest.mark.parametrize("cmd", ["prs", "releases", "summary"])
+def test_explicit_repo_ignores_a_broken_config(cmd, fakes, fixed_clock, tmp_path):
     # The file is only read when no OWNER/REPO is given, so a broken one can't block you.
-    fake = fake_gh if cmd == "prs" else fake_gh_releases
+    fake = fakes[cmd]
     path = tmp_path / "c.toml"
     path.write_text("default_repo = [oops\n")
     result = invoke(fake, fixed_clock, "--config", str(path), cmd, "acme/widgets")
     assert result.exit_code == 0, result.output
     assert repo_flag(fake) == "acme/widgets"
+    assert repo_flags(fake) == {"acme/widgets"}
 
 
 def test_unreadable_config_is_a_clean_error(fake_gh, fixed_clock, tmp_path) -> None:

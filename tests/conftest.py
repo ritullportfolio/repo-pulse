@@ -34,22 +34,36 @@ class FakeGh:
 
 
 class RoutedFakeGh:
-    """Routes each gh call to a FakeGh by its subcommand, e.g. "pr list" or "release list".
+    """Routes each gh call to a FakeGh by its subcommand, e.g. "pr list" or "release view".
 
-    For commands like `summary` that call gh more than once. `calls` records every
-    call in order across all routes; an unrouted subcommand fails the test.
+    For commands like `summary` that call gh more than once. A route may be a list of
+    FakeGh, used one per call in order, for a subcommand called more than once. `calls`
+    records every call in order across all routes. An unrouted subcommand goes to
+    `default`, or fails the test if there is none.
     """
 
-    def __init__(self, routes: dict[str, FakeGh]) -> None:
+    def __init__(self, routes: dict[str, FakeGh | list[FakeGh]],
+                 default: FakeGh | None = None) -> None:
         self.routes = routes
+        self.default = default
         self.calls: list[list[str]] = []
 
     def __call__(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(args))
         key = " ".join(args[:2])
-        if key not in self.routes:
+        route = self.routes.get(key, self.default)
+        if isinstance(route, list):
+            if not route:
+                raise AssertionError(f"more gh calls than expected: gh {' '.join(args)}")
+            route = route.pop(0)
+        if route is None:
             raise AssertionError(f"unexpected gh call: gh {' '.join(args)}")
-        return self.routes[key](args)
+        return route(args)
+
+
+def no_release_gh() -> FakeGh:
+    """What `gh release view` (no tag) does in a repo without releases."""
+    return FakeGh(returncode=1, stderr="release not found")
 
 
 @pytest.fixture(autouse=True)
@@ -106,8 +120,15 @@ def fixed_clock():
 
 
 @pytest.fixture
-def fake_gh_summary(pr_list_json: str, release_list_json: str) -> RoutedFakeGh:
+def release_view_json() -> str:
+    return (FIXTURES / "release_view.json").read_text()
+
+
+@pytest.fixture
+def fake_gh_summary(pr_list_json: str, release_list_json: str,
+                    release_view_json: str) -> RoutedFakeGh:
     return RoutedFakeGh({
         "pr list": FakeGh(stdout=pr_list_json),
+        "release view": FakeGh(stdout=release_view_json),
         "release list": FakeGh(stdout=release_list_json),
     })

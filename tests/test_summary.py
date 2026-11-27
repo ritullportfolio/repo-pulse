@@ -12,22 +12,61 @@ from repo_pulse.cli import create_app
 from repo_pulse.config import Config
 from repo_pulse.metrics import summarize
 from repo_pulse.models import PullRequest, Release, RepoSummary
-from tests.conftest import NOW, FakeGh, RoutedFakeGh
+from tests.conftest import NOW, FakeGh, RoutedFakeGh, no_release_gh
 
 runner = CliRunner()
 
-PR_ARGS = ["pr", "list", "--repo", "acme/widgets", "--state", "open", "--limit", "100",
-           "--json", "number,title,author,createdAt,reviewDecision,url"]
+PR_JSON = ["--json", "number,title,author,createdAt,reviewDecision,url"]
+# --limit 100 (the default) fetches 101, to tell "exactly 100" from "more than 100".
+PR_ARGS = ["pr", "list", "--repo", "acme/widgets", "--state", "open", "--limit", "101", *PR_JSON]
+RELEASE_VIEW_ARGS = ["release", "view", "--repo", "acme/widgets",
+                     "--json", "tagName,name,publishedAt,createdAt,isPrerelease,isDraft"]
 RELEASE_ARGS = ["release", "list", "--repo", "acme/widgets", "--limit", "20",
                 "--json", "tagName,name,publishedAt,createdAt,isLatest,isPrerelease,isDraft"]
+ROW_LABELS = ("Open PRs", "Needing review", "Oldest open PR", "Latest release",
+              "Newer pre-release/draft")
 
 
 def invoke(fake, clock, *args: str, config: Config | None = None):
     return runner.invoke(create_app(runner=fake, clock=clock, config_override=config), list(args))
 
 
-def routed(prs: str = "[]", releases: str = "[]") -> RoutedFakeGh:
-    return RoutedFakeGh({"pr list": FakeGh(stdout=prs), "release list": FakeGh(stdout=releases)})
+def routed(prs: str | list[str] = "[]", releases: str = "[]",
+           latest: str | None = None) -> RoutedFakeGh:
+    """A fake gh for summary. `prs` as a list answers successive `pr list` calls in order.
+    With no `latest`, `gh release view` says the repo has no releases."""
+    pr_route = [FakeGh(stdout=p) for p in prs] if isinstance(prs, list) else FakeGh(stdout=prs)
+    return RoutedFakeGh({
+        "pr list": pr_route,
+        "release view": FakeGh(stdout=latest) if latest is not None else no_release_gh(),
+        "release list": FakeGh(stdout=releases),
+    })
+
+
+def table_rows(output: str) -> dict[str, str]:
+    """The summary table as {label: value}, so assertions compare whole cells.
+
+    Substring checks can't fail here: "3" is in "v2.1.0 (3d)" and "-" is in the
+    "Newer pre-release/draft" label.
+    """
+    rows = {}
+    for line in output.splitlines():
+        if line.startswith("│"):
+            label, value = (cell.strip() for cell in line.strip().strip("│").split("│"))
+            rows[label] = value
+    assert tuple(rows) == ROW_LABELS, output
+    return rows
+
+
+def pr_json(number: int, created: str, decision: str = "") -> dict:
+    return {"number": number, "title": f"PR {number}", "author": {"login": "alice"},
+            "createdAt": created, "reviewDecision": decision,
+            "url": f"https://github.com/acme/widgets/pull/{number}"}
+
+
+def release_json(tag: str, published: str, *, pre: bool = False, latest: bool = False) -> dict:
+    return {"tagName": tag, "name": "", "createdAt": published, "publishedAt": published,
+            "isLatest": latest, "isPrerelease": pre, "isDraft": False}
 
 
 def _pr(number: int, hours_old: int, decision: str | None = None) -> PullRequest:
@@ -44,88 +83,95 @@ def _release(tag: str, hours_old: int, *, latest=False, pre=False, draft=False) 
 
 
 def test_summarize_empty_repo() -> None:
-    assert summarize([], []) == RepoSummary(0, 0, None, None, None)
+    assert summarize([], None, []) == RepoSummary(0, 0, None, None, None)
 
 
 def test_summarize_counts_prs_and_finds_the_oldest() -> None:
     prs = [_pr(1, 5, "REVIEW_REQUIRED"), _pr(2, 50, "APPROVED"), _pr(3, 1, None),
            _pr(4, 2, "REVIEW_REQUIRED")]
-    result = summarize(prs, [])
+    result = summarize(prs, None, [])
     assert result.open_prs == 4
     assert result.prs_needing_review == 2  # None (no review policy) doesn't count
     assert result.oldest_open_pr.number == 2
 
 
-def test_summarize_picks_latest_and_the_newest_newer_prerelease_or_draft() -> None:
+def test_summarize_uses_a_given_oldest_pr_over_the_list() -> None:
+    # A truncated list doesn't hold the oldest PR; the caller looks it up separately.
+    older = _pr(9, 900)
+    assert summarize([_pr(1, 5), _pr(2, 50)], None, [], oldest_open_pr=older).oldest_open_pr is older
+
+
+def test_summarize_picks_the_newest_prerelease_or_draft_newer_than_latest() -> None:
+    latest = _release("v2", 10, latest=True)
     releases = [
         _release("v3-draft", 1, draft=True),
         _release("v3-rc2", 5, pre=True),
-        _release("v2", 10, latest=True),
+        latest,
         _release("v2-rc1", 20, pre=True),  # older than latest: ignored
     ]
-    result = summarize([], releases)
-    assert result.latest_release.tag == "v2"
+    result = summarize([], latest, releases)
+    assert result.latest_release is latest
     assert result.newer_unreleased.tag == "v3-draft"
 
 
 def test_summarize_no_newer_unreleased_when_latest_is_newest() -> None:
-    releases = [_release("v2", 1, latest=True), _release("v2-rc1", 20, pre=True)]
-    assert summarize([], releases).newer_unreleased is None
+    latest = _release("v2", 1, latest=True)
+    assert summarize([], latest, [latest, _release("v2-rc1", 20, pre=True)]).newer_unreleased is None
 
 
 def test_summarize_latest_release_ignores_cutoff() -> None:
-    releases = [_release("v2", 24 * 400, latest=True)]  # over a year old
-    result = summarize([], releases, cutoff=NOW - timedelta(days=7))
-    assert result.latest_release.tag == "v2"
+    latest = _release("v2", 24 * 400, latest=True)  # over a year old
+    result = summarize([], latest, [], cutoff=NOW - timedelta(days=7))
+    assert result.latest_release is latest
 
 
 def test_summarize_cutoff_still_limits_newer_prereleases() -> None:
-    releases = [
-        _release("v3-rc2", 2, pre=True),
-        _release("v3-rc1", 24 * 10, pre=True),  # newer than v2, but before the cutoff
-        _release("v2", 24 * 30, latest=True),
-    ]
+    latest = _release("v2", 24 * 30, latest=True)
+    rc2 = _release("v3-rc2", 2, pre=True)
+    rc1 = _release("v3-rc1", 24 * 10, pre=True)  # newer than v2, but before the cutoff
     week = NOW - timedelta(days=7)
-    assert summarize([], releases, cutoff=week).newer_unreleased.tag == "v3-rc2"
-    assert summarize([], releases[1:], cutoff=week).newer_unreleased is None
-    assert summarize([], releases[1:]).newer_unreleased.tag == "v3-rc1"
-
-
-def test_summary_since_keeps_a_year_old_latest_release(fixed_clock) -> None:
-    old = [{"tagName": "v1.0.0", "name": "", "createdAt": "2025-01-01T10:00:00Z",
-            "publishedAt": "2025-01-01T12:00:00Z", "isLatest": True,
-            "isPrerelease": False, "isDraft": False}]
-    fake = routed(releases=json.dumps(old))
-    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--since", "7d")
-    assert result.exit_code == 0, result.output
-    assert "v1.0.0 (1y)" in result.output
+    assert summarize([], latest, [rc2, rc1], cutoff=week).newer_unreleased is rc2
+    assert summarize([], latest, [rc1], cutoff=week).newer_unreleased is None
+    assert summarize([], latest, [rc1]).newer_unreleased is rc1
 
 
 def test_summarize_without_a_latest_release_reports_any_prerelease() -> None:
-    result = summarize([], [_release("v1-rc1", 3, pre=True), _release("v1-beta", 9, pre=True)])
+    result = summarize([], None, [_release("v1-rc1", 3, pre=True), _release("v1-beta", 9, pre=True)])
     assert result.latest_release is None
     assert result.newer_unreleased.tag == "v1-rc1"
+
+
+def test_summary_since_keeps_a_year_old_latest_release(fixed_clock) -> None:
+    old = {"tagName": "v1.0.0", "name": "", "createdAt": "2025-01-01T10:00:00Z",
+           "publishedAt": "2025-01-01T12:00:00Z", "isPrerelease": False, "isDraft": False}
+    fake = routed(latest=json.dumps(old))
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--since", "7d")
+    assert result.exit_code == 0, result.output
+    assert table_rows(result.output)["Latest release"] == "v1.0.0 (1y)"
 
 
 # --- CLI --------------------------------------------------------------------
 
 
-def test_summary_calls_pr_list_then_release_list(fake_gh_summary, fixed_clock) -> None:
+def test_summary_gh_calls_in_order(fake_gh_summary, fixed_clock) -> None:
+    # pr list first: for a repo that doesn't exist, `gh release view` only says
+    # "release not found", which summary reads as "no releases yet".
     result = invoke(fake_gh_summary, fixed_clock, "summary", "acme/widgets")
     assert result.exit_code == 0, result.output
-    assert fake_gh_summary.calls == [PR_ARGS, RELEASE_ARGS]
+    assert fake_gh_summary.calls == [PR_ARGS, RELEASE_VIEW_ARGS, RELEASE_ARGS]
 
 
 def test_summary_table(fake_gh_summary, fixed_clock) -> None:
     result = invoke(fake_gh_summary, fixed_clock, "summary", "acme/widgets")
     assert result.exit_code == 0, result.output
-    out = result.output
-    assert "acme/widgets: summary" in out
-    for expected in ("Open PRs", "3", "Needing review", "1",
-                     "#40 Old abandoned branch (6w)",
-                     "v2.1.0 (3d)",
-                     "v2.2.0 draft (30m)"):
-        assert expected in out
+    assert "acme/widgets: summary" in result.output
+    assert table_rows(result.output) == {
+        "Open PRs": "3",
+        "Needing review": "1",
+        "Oldest open PR": "#40 Old abandoned branch (6w)",
+        "Latest release": "v2.1.0 (3d)",
+        "Newer pre-release/draft": "v2.2.0 draft (30m)",
+    }
 
 
 def test_summary_json_is_one_object(fake_gh_summary, fixed_clock) -> None:
@@ -155,8 +201,13 @@ def test_summary_json_is_one_object(fake_gh_summary, fixed_clock) -> None:
 def test_summary_empty_repo(fixed_clock) -> None:
     result = invoke(routed(), fixed_clock, "summary", "acme/widgets")
     assert result.exit_code == 0, result.output
-    assert "Open PRs" in result.output
-    assert "-" in result.output
+    assert table_rows(result.output) == {
+        "Open PRs": "0",
+        "Needing review": "0",
+        "Oldest open PR": "-",
+        "Latest release": "-",
+        "Newer pre-release/draft": "-",
+    }
 
 
 def test_summary_empty_repo_json(fixed_clock) -> None:
@@ -172,15 +223,118 @@ def test_summary_empty_repo_json(fixed_clock) -> None:
     }
 
 
-def test_summary_limit_reached_shows_plus(pr_list_json, release_list_json, fixed_clock) -> None:
-    fake = routed(pr_list_json, release_list_json)
+def test_summary_more_prs_than_limit_shows_plus(pr_list_json, fixed_clock) -> None:
+    # The fixture has 3 PRs (newest first: #42, #41, #40), so --limit 2 is truncated.
+    oldest = json.dumps([pr_json(40, "2025-12-01T12:00:00Z")])
+    fake = routed([pr_list_json, oldest])
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "2")
+    assert result.exit_code == 0, result.output
+    rows = table_rows(result.output)
+    assert rows["Open PRs"] == "2+"
+    assert rows["Needing review"] == "1+"
+    assert fake.calls[0][fake.calls[0].index("--limit") + 1] == "3"  # limit + 1
+
+    fake = routed([pr_list_json, oldest])
+    data = json.loads(invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "2",
+                             "--json").output)
+    assert data["open_prs"] == 2
+    assert data["open_prs_limit_reached"] is True
+
+
+# Finding 3: "N+" when the count is exact.
+
+
+def test_summary_exactly_limit_prs_is_exact(pr_list_json, fixed_clock) -> None:
+    fake = routed(pr_list_json)
     result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "3")
     assert result.exit_code == 0, result.output
-    assert "3+" in result.output
-    assert fake.calls[0][fake.calls[0].index("--limit") + 1] == "3"
-    data = json.loads(invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "3",
-                             "--json").output)
-    assert data["open_prs_limit_reached"] is True
+    assert table_rows(result.output)["Open PRs"] == "3"
+    assert fake.calls[0][fake.calls[0].index("--limit") + 1] == "4"
+    assert [call[:2] for call in fake.calls].count(["pr", "list"]) == 1  # no oldest lookup
+
+
+def test_summary_since_trimming_makes_the_count_exact(fixed_clock) -> None:
+    # gh filters by date, so it returns #42 (2d old) for --since 1d. It's newest first,
+    # so once one PR falls before the cutoff, every PR after the cutoff was seen.
+    prs = json.dumps([pr_json(41, "2026-01-15T09:00:00Z", "REVIEW_REQUIRED"),
+                      pr_json(42, "2026-01-13T12:00:00Z")])
+    fake = routed(prs)
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "1",
+                    "--since", "1d", "--json")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["open_prs"] == 1
+    assert data["open_prs_limit_reached"] is False
+    assert data["oldest_open_pr"]["number"] == 41
+
+
+# Finding 1: gh returns newest first, so a truncated list doesn't hold the oldest PR.
+
+
+def test_summary_fetches_the_oldest_pr_when_the_list_is_truncated(fixed_clock) -> None:
+    newest = json.dumps([pr_json(50, "2026-01-15T11:00:00Z"),
+                         pr_json(49, "2026-01-15T10:00:00Z"),
+                         pr_json(48, "2026-01-15T09:00:00Z")])
+    oldest = json.dumps([pr_json(7, "2025-10-07T12:00:00Z")])
+    fake = routed([newest, oldest])
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "2")
+    assert result.exit_code == 0, result.output
+    assert table_rows(result.output)["Oldest open PR"] == "#7 PR 7 (14w)"
+    assert fake.calls[1] == ["pr", "list", "--repo", "acme/widgets", "--state", "open",
+                             "--limit", "1", *PR_JSON, "--search", "sort:created-asc"]
+
+
+def test_summary_oldest_pr_with_since_skips_prs_before_the_exact_cutoff(fixed_clock) -> None:
+    # --since 1d is 2026-01-14T12:00Z. gh searches from midnight that day, so the
+    # oldest-first lookup can start with PRs a few hours too old.
+    newest = json.dumps([pr_json(50, "2026-01-15T11:00:00Z"),
+                         pr_json(49, "2026-01-15T10:00:00Z"),
+                         pr_json(48, "2026-01-15T09:00:00Z")])
+    oldest = json.dumps([pr_json(30, "2026-01-14T06:00:00Z"),
+                         pr_json(31, "2026-01-14T18:00:00Z")])
+    fake = routed([newest, oldest])
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets", "--limit", "2",
+                    "--since", "1d", "--json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["oldest_open_pr"]["number"] == 31
+    lookup = fake.calls[1]
+    assert lookup[lookup.index("--search") + 1] == "created:>=2026-01-14 sort:created-asc"
+    assert lookup[lookup.index("--limit") + 1] == "2"
+
+
+# Finding 2: the latest release can sit behind more than RELEASE_LIMIT pre-releases.
+
+
+def test_summary_finds_the_latest_release_behind_many_prereleases(
+        release_view_json, fixed_clock) -> None:
+    # A full RELEASE_LIMIT (20) of hourly nightlies: the latest release isn't among them.
+    nightlies = [
+        release_json(f"nightly-{h}", (NOW - timedelta(hours=h)).isoformat(), pre=True)
+        for h in range(1, 21)
+    ]
+    fake = routed(releases=json.dumps(nightlies), latest=release_view_json)
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets")
+    assert result.exit_code == 0, result.output
+    rows = table_rows(result.output)
+    assert rows["Latest release"] == "v2.1.0 (3d)"
+    assert rows["Newer pre-release/draft"] == "nightly-1 pre-release (1h)"
+
+
+def test_summary_nightlies_older_than_latest_are_not_newer(release_view_json, fixed_clock) -> None:
+    old_nightly = [release_json("nightly-old", "2026-01-01T00:00:00Z", pre=True)]
+    fake = routed(releases=json.dumps(old_nightly), latest=release_view_json)
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets")
+    assert table_rows(result.output)["Newer pre-release/draft"] == "-"
+
+
+def test_summary_repo_without_releases_is_not_an_error(fixed_clock) -> None:
+    fake = routed(releases=json.dumps([release_json("v1-rc1", "2026-01-15T09:00:00Z",
+                                                    pre=True)]))
+    result = invoke(fake, fixed_clock, "summary", "acme/widgets")
+    assert result.exit_code == 0, result.output
+    rows = table_rows(result.output)
+    assert rows["Latest release"] == "-"
+    assert rows["Newer pre-release/draft"] == "v1-rc1 pre-release (3h)"
 
 
 def test_summary_rejects_zero_limit(fake_gh_summary, fixed_clock) -> None:
@@ -196,7 +350,7 @@ def test_summary_defaults_to_current_repo(fake_gh_summary, fixed_clock) -> None:
     assert "current repo: summary" in result.output
 
 
-def test_summary_uses_config_default_repo_for_both_calls(fake_gh_summary, fixed_clock) -> None:
+def test_summary_uses_config_default_repo_for_every_call(fake_gh_summary, fixed_clock) -> None:
     result = invoke(fake_gh_summary, fixed_clock, "summary",
                     config=Config(default_repo="cli/cli"))
     assert result.exit_code == 0, result.output
@@ -209,7 +363,7 @@ def test_summary_argument_overrides_config(fake_gh_summary, fixed_clock) -> None
     result = invoke(fake_gh_summary, fixed_clock, "summary", "acme/widgets",
                     config=Config(default_repo="cli/cli"))
     assert result.exit_code == 0, result.output
-    assert fake_gh_summary.calls == [PR_ARGS, RELEASE_ARGS]
+    assert fake_gh_summary.calls == [PR_ARGS, RELEASE_VIEW_ARGS, RELEASE_ARGS]
 
 
 def test_summary_invalid_config_is_a_clean_error(fake_gh_summary, fixed_clock, tmp_path) -> None:
@@ -222,9 +376,10 @@ def test_summary_invalid_config_is_a_clean_error(fake_gh_summary, fixed_clock, t
     assert fake_gh_summary.calls == []
 
 
-@pytest.mark.parametrize("failing", ["pr list", "release list"])
-def test_summary_gh_failure_exits_1(failing, pr_list_json, release_list_json, fixed_clock) -> None:
-    fake = routed(pr_list_json, release_list_json)
+@pytest.mark.parametrize("failing", ["pr list", "release view", "release list"])
+def test_summary_gh_failure_exits_1(failing, pr_list_json, release_list_json,
+                                    release_view_json, fixed_clock) -> None:
+    fake = routed(pr_list_json, release_list_json, release_view_json)
     fake.routes[failing] = FakeGh(returncode=1, stderr="HTTP 502: Bad Gateway")
     result = invoke(fake, fixed_clock, "summary", "acme/widgets")
     assert result.exit_code == 1

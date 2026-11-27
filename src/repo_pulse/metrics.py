@@ -92,29 +92,34 @@ def is_at_or_after(when: datetime, cutoff: datetime | None) -> bool:
 
 def summarize(
     open_prs: Sequence[PullRequest],
+    latest_release: Release | None,
     releases: Sequence[Release],
     cutoff: datetime | None = None,
+    *,
+    oldest_open_pr: PullRequest | None = None,
 ) -> RepoSummary:
-    """Combine open PRs and recent releases into a RepoSummary.
+    """Combine open PRs and releases into a RepoSummary.
 
-    `releases` must be unfiltered: the latest release is reported however old it
-    is, because "what's the current release" doesn't depend on --since. `cutoff`
-    only limits which newer pre-releases/drafts count. Callers trim `open_prs`.
+    `latest_release` is reported however old it is: "what's current" doesn't depend
+    on --since. `releases` (unfiltered) supply the pre-releases/drafts newer than it;
+    `cutoff` only limits those. Callers trim `open_prs` to the cutoff. When `open_prs`
+    is truncated, pass the real `oldest_open_pr`; otherwise it's the oldest in the list.
 
     Takes no `now`: it only counts and compares timestamps. Ages are computed at
     render time from the PR and release it picks.
     """
-    latest = next((r for r in releases if r.is_latest), None)
     unreleased = [
         r for r in releases
         if (r.is_draft or r.is_prerelease)
-        and (latest is None or r.released_at > latest.released_at)
+        and (latest_release is None or r.released_at > latest_release.released_at)
         and is_at_or_after(r.released_at, cutoff)
     ]
+    if oldest_open_pr is None:
+        oldest_open_pr = min(open_prs, key=lambda pr: pr.created_at, default=None)
     return RepoSummary(
         open_prs=len(open_prs),
         prs_needing_review=sum(pr.review_decision == "REVIEW_REQUIRED" for pr in open_prs),
-        oldest_open_pr=min(open_prs, key=lambda pr: pr.created_at, default=None),
-        latest_release=latest,
+        oldest_open_pr=oldest_open_pr,
+        latest_release=latest_release,
         newer_unreleased=max(unreleased, key=lambda r: r.released_at, default=None),
     )
